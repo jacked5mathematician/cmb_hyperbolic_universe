@@ -1,4 +1,4 @@
-from special_functions import Q_k_lm_cached
+from utils.special_functions import Q_k_lm_cached
 import mpmath as mp
 import sympy as sp
 import numpy as np

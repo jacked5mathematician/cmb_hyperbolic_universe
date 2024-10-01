@@ -3,7 +3,7 @@ import scipy.optimize
 import matplotlib.pyplot as plt
 from mpmath import hyp2f1, gamma, sqrt, sinh, cosh, pi
 import mpmath as mp
-from special_functions import Phi_nu_l
+from utils.special_functions import Phi_nu_l
 
 # Transcendental equation using the real part of Phi_nu_l
 def transcendental_eq(chi, k, ell):
@@ -85,20 +85,21 @@ def plot_transcendental_eq(k, l_min, l_max, rho_min, rho_max):
     plt.legend()
     plt.show()
 
-# Define parameters for testing
-k = 4  # Example value for k
-l_min = 5  # Example value for l_min
-l_max = 15  # Example value for l_max
+if __name__ == "__main__":
+    # Define parameters for testing
+    k = 4  # Example value for k
+    l_min = 5  # Example value for l_min
+    l_max = 15  # Example value for l_max
 
-# Use the function to find rho_min for l_min and rho_max for l_max
-rho_min = find_rho_solution(k, l_min)
-rho_max = find_rho_solution(k, l_max)
+    # Use the function to find rho_min for l_min and rho_max for l_max
+    rho_min = find_rho_solution(k, l_min)
+    rho_max = find_rho_solution(k, l_max)
 
-print(f"The first rho_min for l_min={l_min} is: {rho_min}")
-print(f"The first rho_max for l_max={l_max} is: {rho_max}")
+    print(f"The first rho_min for l_min={l_min} is: {rho_min}")
+    print(f"The first rho_max for l_max={l_max} is: {rho_max}")
 
-# Call the plot function to visualize the results
-plot_transcendental_eq(k, l_min, l_max, rho_min, rho_max)
+    # Call the plot function to visualize the results
+    plot_transcendental_eq(k, l_min, l_max, rho_min, rho_max)
 
 # Function to create heatmap of rho_min or rho_max
 def create_heatmap(k_values, l_values, mode="min"):
