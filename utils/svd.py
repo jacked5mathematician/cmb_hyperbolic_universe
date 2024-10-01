@@ -2,6 +2,8 @@ import matplotlib.pyplot as plt
 from scipy.linalg import svd
 from joblib import Parallel, delayed
 import numpy as np
+import tqdm
+from utils import construct_numeric_matrix
 
 # Function to solve the system using SVD and compute chi^2
 def solve_system_via_svd_numeric(A):
@@ -22,3 +24,16 @@ def plot_chi_squared_spectrum(k_values, chi_squared_values, L, num_points_used):
     plt.grid(True)
     plt.legend()
     plt.show()
+    
+# Function to compute chi^2 for a given k
+def compute_chi_squared_for_k(k_value, matrix_system):
+    A = construct_numeric_matrix(matrix_system, k_value)
+    chi_squared, _ = solve_system_via_svd_numeric(A)
+    return chi_squared
+
+# Compute the chi^2 spectrum for a range of k values in parallel
+def compute_chi_squared_spectrum_parallel(matrix_system, M, N, k_values):
+    chi_squared_values = Parallel(n_jobs=-1)(
+        delayed(compute_chi_squared_for_k)(k_val, matrix_system) for k_val in tqdm(k_values, desc="Computing Chi-Squared Spectrum")
+    )
+    return chi_squared_values
