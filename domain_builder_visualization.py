@@ -113,4 +113,4 @@ def visualize_dirichlet_domain_with_points(manifold_name, num_points=1000):
     plt.show()
 
 # Test the visualization with different manifolds and plot a random point
-visualize_dirichlet_domain_with_points('m003(-2,3)', num_points=10000)  # Weeks manifold
+visualize_dirichlet_domain_with_points('m003(-3,1)', num_points=10000)  # Weeks manifold
