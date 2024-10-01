@@ -5,3 +5,4 @@ from .transformations import apply_so31_action, project_to_klein, klein_to_pseud
 from .svd import solve_system_via_svd_numeric, plot_chi_squared_spectrum
 from .transcendental_solver import find_rho_solution, transcendental_eq
 from .sys_generation import ensure_picklable, compute_column, generate_matrix_system, construct_numeric_matrix
+from .parameter_control import compute_target_M, filter_points_for_overconstraint, select_points_for_c
