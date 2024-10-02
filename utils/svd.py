@@ -3,7 +3,7 @@ from scipy.linalg import svd
 from joblib import Parallel, delayed
 import numpy as np
 import tqdm
-from utils import construct_numeric_matrix
+from utils.sys_generation import construct_numeric_matrix
 
 # Function to solve the system using SVD and compute chi^2
 def solve_system_via_svd_numeric(A):
