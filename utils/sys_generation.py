@@ -190,22 +190,4 @@ def generate_filtered_matrix_system(points_images, L, k_value, rho_min, rho_max)
     return M, N_calculated, matrix_system
 
 
-# Function to construct the numerical matrix for a given value of k
-def construct_filtered_numeric_matrix(matrix_system, k_value):
-    """Construct the numeric matrix after filtering based on rho_min and rho_max."""
-    M = len(matrix_system)
-    N = len(matrix_system[0])
-    A = np.zeros((M, N), dtype=complex)  # Ensure the matrix is complex
-    
-    # Iterate over rows and columns, converting to Python complex numbers if needed
-    for i in range(M):
-        for j in range(N):
-            entry = matrix_system[i][j]
-            if isinstance(entry, mp.mpc):  # If it's an mpc object from mpmath
-                A[i, j] = complex(entry.real, entry.imag)  # Convert to Python complex
-            else:
-                A[i, j] = entry  # Assume already numeric
-
-    print(f"Constructed filtered matrix for k = {k_value}: size = {M} x {N}")
-    return A
 
