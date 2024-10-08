@@ -11,23 +11,21 @@ from utils import (
     compute_target_M,
     filter_points_for_overconstraint,
     determine_tiling_radius,
-    generate_matrix_system,    # Reverting to non-filtered
-    construct_numeric_matrix   # Reverting to non-filtered
+    generate_matrix_system,    
+    construct_numeric_matrix   
 )
-from tqdm import tqdm  # Import for progress bars
+from tqdm import tqdm 
 
 import cProfile
 import pstats
 import io
 
-# Profiler function to wrap any function you want to profile
 def profile_function(func, *args, **kwargs):
     pr = cProfile.Profile()
     pr.enable()  # Start profiling
     result = func(*args, **kwargs)
     pr.disable()  # Stop profiling
 
-    # Create a string buffer to hold the profile results
     s = io.StringIO()
 
     # Create a Stats object
@@ -37,20 +35,20 @@ def profile_function(func, *args, **kwargs):
     sort_criteria = ['cumulative', 'time', 'calls']
     for criteria in sort_criteria:
         s.write(f"\n---- Profile sorted by {criteria} ----\n")
-        ps.sort_stats(criteria).print_stats(10)  # Print top 10 functions
+        ps.sort_stats(criteria).print_stats(10) # Print the top 10 results
 
     # Save profiling results to a file for later inspection
     with open("profiling_results.txt", "w") as f:
         f.write(s.getvalue())
 
     # Print the profile statistics to the console
-    print(s.getvalue())  # Print the contents of the buffer to the console
+    print(s.getvalue())  
 
     return result
 
 # Main function
 def main():
-    manifold_name = 'm188(-1,1)'  # Example manifold name
+    manifold_name = 'm188(-1,1)' 
     L = 11  # Example value for angular momentum
     num_points = 10000  # Number of random points to generate
     c = 60  # Degree of over-constraint (c = M / N)
@@ -74,7 +72,7 @@ def main():
     inside_points = filter_points_in_domain(points, faces, vertices)
     print(f"Number of points found inside the domain: {len(inside_points)}")
 
-    # Step 4: Determine tiling radius using min_images, max_images, tolerance, and majority_threshold
+    # Step 4: Determine tiling radius using min_images, tolerance, and majority_threshold
     if pairing_matrices is not None and len(inside_points) > 0:
         print(f"Starting to determine rho_min and rho_max with min_images={min_images}, tolorance={tolerance}")
         
