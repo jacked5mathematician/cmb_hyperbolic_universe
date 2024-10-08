@@ -4,15 +4,15 @@ from utils import (
     build_dirichlet_domain,
     generate_random_points_in_domain,
     filter_points_in_domain,
-    select_points,
     generate_transformed_points,
     convert_to_points_images,
-    generate_matrix_system,
-    construct_numeric_matrix,
     solve_system_via_svd_numeric,
     plot_chi_squared_spectrum,
     compute_target_M,
-    filter_points_for_overconstraint
+    filter_points_for_overconstraint,
+    determine_tiling_radius,
+    generate_matrix_system,    # Reverting to non-filtered
+    construct_numeric_matrix   # Reverting to non-filtered
 )
 from tqdm import tqdm  # Import for progress bars
 
@@ -48,35 +48,15 @@ def profile_function(func, *args, **kwargs):
 
     return result
 
-# Helper function to ensure minimum images per point
-def ensure_minimum_images(inside_points, pairing_matrices, min_images_per_point=10, max_rho_max=5.0):
-    rho_max = 0.5  # Start with an initial small rho_max
-    step_size = 0.1  # Adjust rho_max in increments
-    classified_points = None
-
-    while rho_max <= max_rho_max:
-        # Generate transformed points with the current rho_max
-        classified_points = generate_transformed_points(inside_points, pairing_matrices, rho_max)
-
-        # Check if all points have at least `min_images_per_point`
-        all_sufficient = all(len(images) >= min_images_per_point for images in classified_points.values())
-
-        if all_sufficient:
-            break  # We have enough images, exit the loop
-        else:
-            rho_max += step_size  # Increase rho_max and try again
-
-    if rho_max > max_rho_max:
-        print(f"Warning: rho_max exceeded the limit of {max_rho_max}, stopping adjustment.")
-
-    return classified_points, rho_max
-
+# Main function
 def main():
     manifold_name = 'm188(-1,1)'  # Example manifold name
     L = 11  # Example value for angular momentum
-    num_points = 1000  # Number of random points to generate
+    num_points = 10000  # Number of random points to generate
     c = 60  # Degree of over-constraint (c = M / N)
-    min_images_per_point = 10  # Minimum number of images per point
+    min_images = 12  # Minimum number of images required per point
+    tolerance = 0.1  # Allow small deviations in rho
+    majority_threshold = 0.9  # Require that 90% of points satisfy the image conditions
     k_values = np.linspace(1.0, 10.0, 100)  # Range of k values
     resolution = 100  # Resolution for the k values
 
@@ -94,10 +74,23 @@ def main():
     inside_points = filter_points_in_domain(points, faces, vertices)
     print(f"Number of points found inside the domain: {len(inside_points)}")
 
-    # Step 4: Ensure minimum images per point and dynamically adjust rho_max
+    # Step 4: Determine tiling radius using min_images, max_images, tolerance, and majority_threshold
     if pairing_matrices is not None and len(inside_points) > 0:
-        classified_transformed_points, rho_max = ensure_minimum_images(inside_points, pairing_matrices, min_images_per_point)
+        print(f"Starting to determine rho_min and rho_max with min_images={min_images}, tolorance={tolerance}")
+        
+        classified_transformed_points, rho_min, rho_max, num_of_valid_points = determine_tiling_radius(
+            inside_points, pairing_matrices, L, c, min_images, tolerance
+        )
+
+        if classified_transformed_points is None:
+            print("Error in calculating rho_min or rho_max. Aborting.")
+            return
+
+        print(f"Final rho_min used: {rho_min}")
         print(f"Final rho_max used: {rho_max}")
+        
+        # Convert the dictionary classified_transformed_points to a list of lists of tuples
+        points_images = convert_to_points_images(classified_transformed_points)
 
         # Step 5: Calculate the target number of rows (M) based on the degree of over-constraint (c) and L
         M_desired, N = compute_target_M(L, c)
@@ -110,10 +103,10 @@ def main():
         # Convert the dictionary selected_transformed_points to a list of lists of tuples
         points_images = convert_to_points_images(selected_transformed_points)
 
-        # Step 7: Compute matrix system and chi-squared values (Note: M remains the same for each k-value)
+        # Step 7: Compute matrix system and chi-squared values using non-filtered matrix system
         chi_squared_values = []
         for k_value in tqdm(k_values, desc="Computing Matrix for each k"):
-            _, _, matrix_system = generate_matrix_system(points_images, L, k_value)
+            _, _, matrix_system = generate_matrix_system(points_images, L, k_value, num_of_valid_points)
 
             # Skip if the matrix system is empty
             if len(matrix_system) == 0 or len(matrix_system[0]) == 0:
