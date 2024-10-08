@@ -43,7 +43,7 @@ def klein_to_pseudo_spherical(points):
 
 
 # Generate transformed points by applying the group generators
-def generate_transformed_points(inside_points, pairing_matrices, rho_max):
+def generate_transformed_points(inside_points, pairing_matrices):
     classified_points = {i: [] for i in range(len(inside_points))}
     inside_points = np.array(inside_points)
     
@@ -53,8 +53,7 @@ def generate_transformed_points(inside_points, pairing_matrices, rho_max):
         pseudo_spherical_points = klein_to_pseudo_spherical(klein_points)
         
         for pseudo_spherical_point in pseudo_spherical_points:
-            if pseudo_spherical_point[0] <= rho_max:
-                classified_points[i].append(pseudo_spherical_point)
+            classified_points[i].append(pseudo_spherical_point)
     
     return classified_points
 
