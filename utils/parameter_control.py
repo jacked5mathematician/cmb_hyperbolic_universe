@@ -74,7 +74,7 @@ def filter_points_for_overconstraint(classified_transformed_points, inside_point
 
 import time
 
-def determine_tiling_radius(inside_points, pairing_matrices, L, c, min_images=5, tolerance=0.1, initial_step_size=0.05, min_step_size=0.001):
+def determine_tiling_radius(inside_points, pairing_matrices, L, c, min_images=5, tolerance=0.1, initial_step_size=0.05, min_step_size=0.0005):
     """
     Adjust rho_min and rho_max to include enough images such that the total number of rows matches the target M,
     while ensuring each point has at least the minimum number of images within the range [rho_min, rho_max].
