@@ -14,20 +14,18 @@ from utils import (
     generate_matrix_system,   
     construct_numeric_matrix 
 )
-from tqdm import tqdm  # Import for progress bars
+from tqdm import tqdm 
 
 import cProfile
 import pstats
 import io
 
-# Profiler function to wrap any function you want to profile
 def profile_function(func, *args, **kwargs):
     pr = cProfile.Profile()
     pr.enable()  # Start profiling
     result = func(*args, **kwargs)
     pr.disable()  # Stop profiling
 
-    # Create a string buffer to hold the profile results
     s = io.StringIO()
 
     # Create a Stats object
@@ -37,20 +35,21 @@ def profile_function(func, *args, **kwargs):
     sort_criteria = ['cumulative', 'time', 'calls']
     for criteria in sort_criteria:
         s.write(f"\n---- Profile sorted by {criteria} ----\n")
-        ps.sort_stats(criteria).print_stats(10)  # Print top 10 functions
+        ps.sort_stats(criteria).print_stats(10) # Print the top 10 results
 
     # Save profiling results to a file for later inspection
     with open("profiling_results.txt", "w") as f:
         f.write(s.getvalue())
 
     # Print the profile statistics to the console
-    print(s.getvalue())  # Print the contents of the buffer to the console
+    print(s.getvalue())  
 
     return result
 
 # Main function
 def main():
     manifold_name = 'm188(-1,1)'  # Example manifold name
+    L = 11  # Example value for angular momentum
     num_points = 10000  # Number of random points to generate
     min_images = 20  # Minimum number of images required per point
     tolerance = 0.1  # Allow small deviations in rho
@@ -71,37 +70,13 @@ def main():
     inside_points = filter_points_in_domain(points, faces, vertices)
     print(f"Number of points found inside the domain: {len(inside_points)}")
 
-    # Initialize variables to track when c and L change
-    previous_c_value = None
-    classified_transformed_points = None
-    rho_min, rho_max = None, None
-    valid_points = None
-    selected_points = None
-    selected_transformed_points = None
-    L = None
-
-    # Step 4: Iterate over k_values and adjust the over-constraint based on k
-    chi_squared_values = []
-    for k_value in tqdm(k_values, desc="Computing Matrix for each k"):
-        # Compute new c and L based on the current k_value
-        new_c_value = 10 + round(100 / k_value)
-        new_L_value = 10 + round(k_value)
-
-        # Print the new L value if it has changed
-        if L != new_L_value:
-            L = new_L_value
-            print(f"New angular momentum value: {L}")
-        else:
-            print(f"Angular momentum value: {L}")
-
-        # Only recompute the tiling radius if the value of c has changed
-        if new_c_value != previous_c_value:
-            print(f"Computing tiling radius for k = {k_value}, c = {new_c_value}")
-
-            # Compute the tiling radius for the new value of c
-            classified_transformed_points, rho_min, rho_max, valid_points = determine_tiling_radius(
-                inside_points, pairing_matrices, L, new_c_value, min_images, tolerance
-            )
+    # Step 4: Determine tiling radius using min_images, max_images, tolerance, and majority_threshold
+    if pairing_matrices is not None and len(inside_points) > 0:
+        print(f"Starting to determine rho_min and rho_max with min_images={min_images}, tolorance={tolerance}")
+        
+        classified_transformed_points, rho_min, rho_max, num_of_valid_points = determine_tiling_radius(
+            inside_points, pairing_matrices, L, c, min_images, tolerance
+        )
 
             # If the tiling radius failed, stop the process
             if classified_transformed_points is None:
