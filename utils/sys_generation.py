@@ -4,6 +4,7 @@ from utils.special_functions import parallel_Q_k_lm_compute
 import mpmath as mp
 import sympy as sp
 import numpy as np
+from joblib import Parallel, delayed
 
 # Ensure picklability for special numeric types
 def ensure_picklable(value):
@@ -15,9 +16,10 @@ def ensure_picklable(value):
         return float(value.evalf())
     return value
 
-# Parallelized and cache-optimized version of compute_column
-def compute_column(l, m, k_value, points_images, q_values):
-    """Optimized compute_column with caching and parallel pre-computation."""
+# Parallelized and cache-optimized version of compute_colum
+
+def compute_column(l, m, k_value, points_images, q_values, n_jobs=-1):
+    """Optimized compute_column with joblib parallelization."""
     column = []
 
     # Helper function to compute the difference between two Q_k_lm values
@@ -30,19 +32,16 @@ def compute_column(l, m, k_value, points_images, q_values):
 
         return Q_alpha - Q_beta
 
-    # Use ThreadPoolExecutor to parallelize the column computation
-    with ThreadPoolExecutor() as executor:
-        for images in points_images:
-            n_j = len(images)
-            results = list(executor.map(
-                lambda pair: process_image_pair(pair[0], pair[1], images),
-                [(alpha, beta) for alpha in range(n_j) for beta in range(alpha + 1, n_j)]
-            ))
-            column.extend(results)
+    # Parallelize the column computation with Joblib
+    for images in points_images:
+        n_j = len(images)
+        pairs = [(alpha, beta) for alpha in range(n_j) for beta in range(alpha + 1, n_j)]
+        # Parallel processing of each pair with joblib
+        results = Parallel(n_jobs=n_jobs)(delayed(process_image_pair)(alpha, beta, images) for alpha, beta in pairs)
+        column.extend(results)
 
     return column
 
-# Function to construct the matrix system
 def generate_matrix_system(points_images, L, k_value, valid_points):
     # Convert k_value to float if it's not already to ensure it's picklable
     k_value = float(k_value)
@@ -62,20 +61,11 @@ def generate_matrix_system(points_images, L, k_value, valid_points):
     # Use the parallelized Q_k_lm computation
     q_values = parallel_Q_k_lm_compute(lm_pairs, k_value, points_images)
 
-    columns = []
-    with ThreadPoolExecutor() as executor:
-        for l, m in lm_pairs:
-            # Parallelize and submit the task to compute columns
-            future_column = executor.submit(compute_column, l, m, k_value, points_images, q_values)
-            columns.append(future_column)
-
-        # Use tqdm to display the progress of column generation
-        columns = list(tqdm(
-            [future.result() for future in columns],
-            total=len(lm_pairs),
-            desc="Generating matrix columns",
-            ascii=False
-        ))
+    # Joblib Parallel for parallel processing with a dynamic progress bar
+    columns = Parallel(n_jobs=-1)(
+        delayed(compute_column)(l, m, k_value, points_images, q_values)
+        for l, m in tqdm(lm_pairs, total=len(lm_pairs), desc="Generating matrix columns", ascii=False)
+    )
 
     print("Matrix generation completed.")
 
