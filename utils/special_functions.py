@@ -3,6 +3,8 @@ import mpmath as mp
 from mpmath import hyp2f1, gamma, sqrt, sinh, cosh, pi
 from functools import lru_cache
 from scipy.special import lpmv
+from joblib import Parallel, delayed
+from tqdm import tqdm
 
 epsilon = 1e-12  # Small number to avoid division by zero
 mp.dps = 5
@@ -47,7 +49,7 @@ def Y_lm_real(l, m, theta, phi):
     else:
         return normalization_constant(l, 0) * lpmv(0, l, np.cos(theta))
 
-# Global cache dictionaries
+# Global cache dictionaries for Q functions
 phi_cache = {}
 y_lm_cache = {}
 
@@ -75,3 +77,37 @@ def Q_k_lm(k, l, m, rho, theta, phi):
 @lru_cache(maxsize=None)
 def Q_k_lm_cached(k, l, m, rho, theta, phi):
     return Q_k_lm(k, l, m, rho, theta, phi)
+
+# Parallelize the expensive computation of Phi_nu_l and Y_lm_real
+def parallel_Phi_Y_lm(lm_pairs, k_value, all_images):
+    """Parallel computation of Phi_nu_l and Y_lm_real for all lm_pairs and images."""
+    
+    def compute_Phi_Y_lm(l, m, k_value, rho, theta, phi):
+        nu = np.sqrt(k_value**2 + 1)
+        Phi_nu_l_val = Phi_nu_l_cached(nu, l, rho)
+        Y_lm_real_val = Y_lm_real_cached(l, m, theta, phi)
+        return (rho, theta, phi), Phi_nu_l_val * Y_lm_real_val
+
+    # Parallelizing the computation across all lm pairs and image points
+    total_tasks = len(lm_pairs) * len(all_images)
+    with tqdm(total=total_tasks, desc="Precomputing Phi and Y_lm values", unit="task", dynamic_ncols=True) as pbar:
+        results = Parallel(n_jobs=-1)(
+            delayed(compute_Phi_Y_lm)(l, m, k_value, rho, theta, phi)
+            for l, m in lm_pairs
+            for rho, theta, phi in all_images
+        )
+        pbar.update(total_tasks)
+
+    # Convert the results into a dictionary
+    q_values_dict = {result[0]: result[1] for result in results}
+    return q_values_dict
+
+# Parallelize the Q_k_lm computation
+def parallel_Q_k_lm_compute(lm_pairs, k_value, points_images):
+    """Compute Q_k_lm for all lm pairs and points_images in parallel."""
+    all_images = [(rho, theta, phi) for point_images in points_images for (rho, theta, phi) in point_images]
+    
+    # Use joblib to parallelize the computations of Phi_nu_l and Y_lm
+    q_values_dict = parallel_Phi_Y_lm(lm_pairs, k_value, all_images)
+    
+    return q_values_dict
