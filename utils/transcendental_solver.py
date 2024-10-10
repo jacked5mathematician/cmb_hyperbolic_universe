@@ -1,151 +1,116 @@
 import numpy as np
-import scipy.optimize
 import matplotlib.pyplot as plt
 from mpmath import hyp2f1, gamma, sqrt, sinh, cosh, pi
-import mpmath as mp
+from scipy.optimize import minimize_scalar
 from utils.special_functions import Phi_nu_l
 
 # Transcendental equation using the real part of Phi_nu_l
 def transcendental_eq(chi, k, ell):
     """Equation to find the root for rho_max given k and ell using the real part of Phi_nu_l."""
     nu = np.sqrt(k**2 + 1)
-    # Take the real part of Phi_nu_l and subtract 0.25 for the transcendental equation
-    return float(Phi_nu_l(nu, ell, chi).real * np.sinh(chi)) - 0.25
+    return float(Phi_nu_l(nu, ell, chi).real)
 
-# Separate function to search for interval and find rho (root)
-def find_rho_solution(k, ell, lower=0.1, upper=50, step=0.1):
+# Approximation function for large rho
+def approx_function(rho, k, phi_0):
+    """Approximation function: cos(k*rho + phi_0)/sinh(rho)."""
+    return np.cos(k * rho + phi_0) / np.sinh(rho)
+
+# Derivative of Phi_nu_l with respect to rho (numerical)
+def derivative_phi_nu_l(chi, k, ell, delta=1e-5):
+    """Numerically compute the derivative of Phi_nu_l with respect to chi."""
+    return (transcendental_eq(chi + delta, k, ell) - transcendental_eq(chi - delta, k, ell)) / (2 * delta)
+
+# Derivative of the approximation function with respect to rho
+def derivative_approx_function(rho, k, phi_0):
+    """Analytical derivative of the approximation function."""
+    return -k * np.sin(k * rho + phi_0) / np.sinh(rho) - np.cos(k * rho + phi_0) * np.cosh(rho) / np.sinh(rho)**2
+
+# Search for the transition point rho_0 where the function values and derivatives match
+def find_rho0(k, ell, rho_min=10, rho_max=20, step=0.1):
     """
-    Find the first rho where the transcendental equation X^l_k(rho) * sinh(rho) = 0.25 holds.
-    This function searches for an interval where the equation crosses 0.25 and then uses
-    a root-finding method (brentq) to locate the root.
-
+    Find rho_0 where Phi_nu_l and the approximation function values are close.
+    
     Parameters:
     - k: The wavenumber.
     - ell: The angular momentum quantum number.
-    - lower: The lower bound for rho search.
-    - upper: The upper bound for rho search.
-    - step: The step size to search for interval crossings.
-
-    Returns:
-    - rho: The first rho where the equation holds.
-    """
-
-    # Search for an interval where the transcendental_eq crosses zero
-    def find_interval():
-        for chi in np.arange(lower, upper, step):
-            f_lower = transcendental_eq(chi, k, ell)
-            f_upper = transcendental_eq(chi + step, k, ell)
-            # Check if the function crosses zero between chi and chi + step
-            if f_lower * f_upper < 0:
-                return chi, chi + step
-        return None, None  # No crossing found within the range
-
-    # Find the interval
-    lower_bound, upper_bound = find_interval()
+    - rho_min: The minimum rho value for the search.
+    - rho_max: The maximum rho value for the search.
+    - step: The step size for scanning rho values.
     
-    if lower_bound is not None and upper_bound is not None:
-        # Use Brent's method to find the root in the identified interval
-        rho = scipy.optimize.brentq(transcendental_eq, lower_bound, upper_bound, args=(k, ell))
-        return rho
-    else:
-        return np.nan  # No root found within the given range
-
-# New function to handle graphing
-def plot_transcendental_eq(k, l_min, l_max, rho_min, rho_max):
+    Returns:
+    - rho_0: The rho value where the functions are similar.
     """
-    Plot the transcendental equation for given k, l_min, and l_max, and show rho_min and rho_max.
+    for rho in np.arange(rho_min, rho_max, step):
+        phi_nu_l_value = transcendental_eq(rho, k, ell)
+        approx_value = approx_function(rho, k, 0)  # Initial phi_0 = 0 guess
+        if np.isclose(phi_nu_l_value, approx_value, atol=0.1):
+            return rho
+    return rho_max  # If no match is found, return the upper bound
+
+# Find the optimal phi_0 to match the derivative at rho_0
+def find_phi0(rho_0, k, ell):
+    """
+    Find the optimal phi_0 to match the derivatives at rho_0.
+    
+    Parameters:
+    - rho_0: The transition point where the values match.
+    - k: The wavenumber.
+    - ell: The angular momentum quantum number.
+    
+    Returns:
+    - phi_0: The phase shift that aligns the derivative of the approximation with Phi_nu_l.
+    """
+    # Define an objective function to minimize the difference in derivatives
+    def derivative_error(phi_0):
+        exact_derivative = derivative_phi_nu_l(rho_0, k, ell)
+        approx_derivative = derivative_approx_function(rho_0, k, phi_0)
+        return np.abs(exact_derivative - approx_derivative)
+
+    # Use a scalar minimizer to find phi_0 that minimizes the derivative error
+    result = minimize_scalar(derivative_error, bounds=(-np.pi, np.pi), method='bounded')
+    return result.x
+
+# Plotting function to visualize the results
+def plot_comparison_with_matching_derivatives(k, ell, rho_min=0.1, rho_max=20):
+    """
+    Plot the real part of Phi_nu_l and the matched approximation function.
     
     Parameters:
     - k: The wavenumber.
-    - l_min: The lower angular momentum value.
-    - l_max: The higher angular momentum value.
-    - rho_min: The first root for l_min (to be displayed on the plot).
-    - rho_max: The first root for l_max (to be displayed on the plot).
+    - ell: The angular momentum quantum number.
+    - rho_min: The minimum rho value for the plot.
+    - rho_max: The maximum rho value for the plot.
     """
+    # Find rho_0 where the functions match
+    rho_0 = find_rho0(k, ell)
+    phi_0_opt = find_phi0(rho_0, k, ell)
+
     # Define a range for rho (chi)
-    rho_values = np.linspace(0.1, 20, 500)
+    rho_values = np.linspace(rho_min, rho_max, 500)
 
-    # Compute the transcendental equation values for l_min and l_max
-    transcendental_min = [transcendental_eq(rho, k, l_min) + 0.25 for rho in rho_values]  # Add 0.25 for visualization
-    transcendental_max = [transcendental_eq(rho, k, l_max) + 0.25 for rho in rho_values]  # Add 0.25 for visualization
+    # Compute the exact and approximate function values
+    exact_values = [transcendental_eq(rho, k, ell) for rho in rho_values]
+    approx_values = [approx_function(rho, k, phi_0_opt) for rho in rho_values]
 
-    # Plot the transcendental equation for l_min and l_max
+    # Plot both Phi_nu_l and the matched approximation
     plt.figure(figsize=(10, 6))
-    plt.plot(rho_values, transcendental_min, label=f"$l_{{min}} = {l_min}$", color='blue')
-    plt.plot(rho_values, transcendental_max, label=f"$l_{{max}} = {l_max}$", color='red')
-    plt.axhline(0.25, color='green', linestyle='--', label="$0.25$")
-    if not np.isnan(rho_min):
-        plt.axvline(rho_min, color='blue', linestyle='--', label=f"$\\rho_{{min}} = {rho_min:.2f}$")
-    if not np.isnan(rho_max):
-        plt.axvline(rho_max, color='red', linestyle='--', label=f"$\\rho_{{max}} = {rho_max:.2f}$")
+    plt.plot(rho_values, exact_values, label=f"$\\Phi_{{\\nu,\\ell}}(\\rho)$", color='blue')
+    plt.plot(rho_values, approx_values, label=f"Matched Approximation", linestyle='dashed', color='red')
+    plt.axvline(x=rho_0, color='green', linestyle=':', label=f"Matched $\\rho_0 = {rho_0:.2f}$")
     plt.xlabel("$\\rho$")
-    plt.ylabel("$X^{\\ell}_k(\\rho) \\times \\sinh(\\rho)$")
-    plt.title("Solution to the transcendental equation for different $l$ values")
+    plt.ylabel("Function Value")
+    plt.title("Comparison of $\\Phi_{\\nu,\\ell}(\\rho)$ and the Matched Approximation")
     plt.grid(True)
     plt.legend()
     plt.show()
 
+    print(f"Matched rho_0: {rho_0:.6f}")
+    print(f"Matched phi_0: {phi_0_opt:.6f}")
+
 if __name__ == "__main__":
     # Define parameters for testing
     k = 4  # Example value for k
-    l_min = 5  # Example value for l_min
-    l_max = 15  # Example value for l_max
-
-    # Use the function to find rho_min for l_min and rho_max for l_max
-    rho_min = find_rho_solution(k, l_min)
-    rho_max = find_rho_solution(k, l_max)
-
-    print(f"The first rho_min for l_min={l_min} is: {rho_min}")
-    print(f"The first rho_max for l_max={l_max} is: {rho_max}")
+    ell = 5  # Example value for ell
 
     # Call the plot function to visualize the results
-    plot_transcendental_eq(k, l_min, l_max, rho_min, rho_max)
-
-# Function to create heatmap of rho_min or rho_max
-def create_heatmap(k_values, l_values, mode="min"):
-    """
-    Create a heatmap of rho_min or rho_max values over a range of k and ell values.
-    
-    Parameters:
-    - k_values: Array of k values.
-    - l_values: Array of ell values.
-    - mode: "min" for rho_min or "max" for rho_max.
-    
-    Returns:
-    - A heatmap of rho_min or rho_max values.
-    """
-    heatmap_data = np.zeros((len(l_values), len(k_values)))
-
-    # Loop through the grid of k and ell values
-    for i, l in enumerate(l_values):
-        for j, k in enumerate(k_values):
-            # Find rho_min or rho_max depending on the mode
-            if mode == "min":
-                rho = find_rho_solution(k, l)
-            else:
-                rho = find_rho_solution(k, l)
-            
-            heatmap_data[i, j] = rho
-    
-    return heatmap_data
-
-# Set parameters for the heatmap
-#k_values = np.linspace(1, 10, 20)  # Range of k values
-#l_values = np.arange(1, 20,1)  # Range of ell values
-
-# Create heatmaps for rho_min and rho_max
-#rho_min_heatmap = create_heatmap(k_values, l_values, mode="min")
-
-# Plotting heatmap
-def plot_heatmap(heatmap_data, k_values, l_values, title):
-    plt.figure(figsize=(10, 6))
-    plt.imshow(heatmap_data, extent=[k_values[0], k_values[-1], l_values[0], l_values[-1]],
-               aspect='auto', origin='lower', cmap='viridis')
-    plt.colorbar(label="Rho")
-    plt.title(title)
-    plt.xlabel("k values")
-    plt.ylabel("l values")
-    plt.show()
-
-# Plot rho_min heatmap
-#plot_heatmap(rho_min_heatmap, k_values, l_values, title="Heatmap of rho_min values for changing k and l")
+    plot_comparison_with_matching_derivatives(k, ell)
