@@ -5,6 +5,7 @@ from functools import lru_cache
 from scipy.special import lpmv
 
 epsilon = 1e-12  # Small number to avoid division by zero
+mp.dps = 5
 
 # Radial function using Phi^nu_l (Hyperspherical Bessel function for K=-1)
 def Phi_nu_l(nu, l, chi):
