@@ -54,8 +54,9 @@ def main():
     num_points = 10000  # Number of random points to generate
     min_images = 20  # Minimum number of images required per point
     tolerance = 0.1  # Allow small deviations in rho
-    k_values = np.linspace(1.0, 10.0, 100)  # Range of k values
-    resolution = 100  # Resolution for the k values
+    resolution = 400  # Resolution for the k values
+    k_values = np.linspace(1.0, 10.0, resolution)  # Range of k values
+    
 
     # Step 1: Build Dirichlet domain
     domain_data = build_dirichlet_domain(manifold_name)
@@ -141,7 +142,7 @@ def main():
         chi_squared_values.append(chi_squared)
 
     # Step 8: Plot the chi-squared spectrum
-    plot_chi_squared_spectrum(k_values, chi_squared_values, L, len(selected_points))
+    plot_chi_squared_spectrum(k_values, chi_squared_values, manifold_name, resolution)
 
 
 if __name__ == "__main__":
