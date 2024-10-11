@@ -23,16 +23,29 @@ def solve_system_via_svd_numeric(A):
 
     return chi_squared, a
 
-# Function to plot the chi^2 spectrum
-def plot_chi_squared_spectrum(k_values, chi_squared_values, L, num_points_used):
+import matplotlib.pyplot as plt
+from matplotlib import rc
+
+# Enable LaTeX for rendering text in the plot
+rc('text', usetex=True)
+
+def plot_chi_squared_spectrum(k_values, chi_squared_values, manifold_name, resolution):
     plt.figure(figsize=(8, 6))
     plt.plot(k_values, chi_squared_values, label=r'$\chi^2(k)$ Spectrum', color='blue')
-    plt.xlabel(r'$k$')
-    plt.ylabel(r'$\chi^2$')
-    plt.title(r'$\chi^2$ Spectrum for Varying $k$, L = {}$, Points = {}'.format(L, num_points_used))
+    
+    # LaTeX for axis labels
+    plt.xlabel(r'$k$', fontsize=14)
+    plt.ylabel(r'$\chi^2$', fontsize=14)
+    
+    # LaTeX for the title with manifold name
+    plt.title(r'$\chi^2$ Spectrum for {}, with Resolution = {}'.format(manifold_name,resolution), fontsize=16)
+    
     plt.grid(True)
     plt.legend()
-    plt.show()
+    
+    # Instead of plt.show(), save the plot to a file
+    plt.savefig(f'chi_squared_spectrum_{manifold_name}_{resolution}res.png')  # Save plot as a PNG image
+    print(f"chi_squared_spectrum_{manifold_name}_{resolution}res.png")
 
 # Function to compute chi^2 for a given k, with progress bar update
 def compute_chi_squared_for_k(k_value, matrix_system):
