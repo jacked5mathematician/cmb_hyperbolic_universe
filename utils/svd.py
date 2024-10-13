@@ -38,14 +38,15 @@ def plot_chi_squared_spectrum(k_values, chi_squared_values, manifold_name, resol
     plt.ylabel(r'$\chi^2$', fontsize=14)
     
     # LaTeX for the title with manifold name
-    plt.title(r'$\chi^2$ Spectrum for {}, with Resolution = {}'.format(manifold_name,resolution), fontsize=16)
+    title_str = r'$\chi^2$ Spectrum for {}, with Resolution = {}'.format(manifold_name, resolution)
+    plt.title(title_str, fontsize=16)
     
     plt.grid(True)
     plt.legend()
     
     # Instead of plt.show(), save the plot to a file
     plt.savefig(f'chi_squared_spectrum_{manifold_name}_{resolution}res.png')  # Save plot as a PNG image
-    print(f"chi_squared_spectrum_{manifold_name}_{resolution}res.png")
+    print(f"Process saved as chi_squared_spectrum_{manifold_name}_{resolution}res.png")
 
 # Function to compute chi^2 for a given k, with progress bar update
 def compute_chi_squared_for_k(k_value, matrix_system):
