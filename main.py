@@ -51,13 +51,16 @@ def main():
     num_points = 10000  # Number of random points to generate
     min_images = 20  # Minimum number of images required per point
     tolerance = 0.1  # Allow small deviations in rho
-    resolution = 400  # Resolution for the k values
+    resolution = 10  # Resolution for the k values
     k_values = np.linspace(1.0, 10.0, resolution)  # Range of k values
 
-    # Define the chunk size (adjust based on available memory)
-    chunk_size = 100
-    num_chunks = len(k_values) // chunk_size + (1 if len(k_values) % chunk_size != 0 else 0)
-    
+    # Specify how many chunks you want
+    num_chunks = 2  # Example: You want 4 chunks
+
+    # Calculate the chunk size based on the number of k_values and number of chunks
+    chunk_size = len(k_values) // num_chunks
+    remainder = len(k_values) % num_chunks  # Handle remainder values
+
     # Step 1: Build Dirichlet domain
     domain_data = build_dirichlet_domain(manifold_name)
     if domain_data is None:
@@ -72,11 +75,15 @@ def main():
 
     chi_squared_values = []  # Store chi-squared values across chunks
 
-    # Process `k_values` in chunks
+    # Process `k_values` in the specified number of chunks
+    start_idx = 0
     for chunk_idx in range(num_chunks):
-        start_idx = chunk_idx * chunk_size
-        end_idx = min(start_idx + chunk_size, len(k_values))
+        end_idx = start_idx + chunk_size
+        if chunk_idx < remainder:
+            end_idx += 1  # Distribute remainder evenly across chunks
+
         k_values_chunk = k_values[start_idx:end_idx]
+        start_idx = end_idx  # Move to the next chunk
 
         # Step 3: Precompute tiling radius and points_images for the current chunk of k_values
         precomputed_tiling_data = {}
@@ -100,7 +107,7 @@ def main():
             )
             points_images = convert_to_points_images(selected_transformed_points)
 
-            # Store precomputed data
+            # Store precomputed tiling data
             precomputed_tiling_data[k_value] = {
                 'points_images': points_images,
                 'valid_points': len(selected_points),
@@ -112,12 +119,11 @@ def main():
         precomputed_data = precompute_special_functions(precomputed_tiling_data)
 
         # Step 5: Generate matrices for each k_value in the current chunk and compute chi-squared values
-        for k_value in tqdm(k_values_chunk, desc="Generating matrices"):
-            if k_value not in precomputed_data:
-                print(f"No precomputed data for k = {k_value}. Skipping.")
-                continue
+        for idx, k_value in enumerate(k_values_chunk):
+            q_values, points_images, L_value = precomputed_data[idx]
 
-            M, N, matrix_system = generate_matrix_system(precomputed_data, k_value)
+            # Generate matrix system
+            M, N, matrix_system = generate_matrix_system(q_values, points_images, L_value)
             A = construct_numeric_matrix(matrix_system, k_value)
             chi_squared, _ = solve_system_via_svd_numeric(A)
             chi_squared_values.append(chi_squared)
