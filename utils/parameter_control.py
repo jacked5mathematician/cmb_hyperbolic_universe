@@ -202,4 +202,4 @@ def determine_tiling_radius(inside_points, pairing_matrices, L, c, min_images=5,
         if len(filtered_images) > 0:
             final_points[idx] = filtered_images
 
-    return final_points, rho_min, rho_max, valid_points
+    return final_points, rho_min, rho_max, valid_points, M_desired

@@ -7,7 +7,7 @@ from joblib import Parallel, delayed
 from tqdm import tqdm
 
 epsilon = 1e-12  # Small number to avoid division by zero
-mp.dps = 5
+mp.dps = 9
 
 # Radial function using Phi^nu_l (Hyperspherical Bessel function for K=-1)
 def Phi_nu_l(nu, l, chi):
@@ -69,7 +69,7 @@ def Y_lm_real_cached(l, m, theta, phi):
 
 # Full eigenfunction Q_{k,l,m}(rho, theta, phi) using Phi_nu_l
 def Q_k_lm(k, l, m, rho, theta, phi):
-    nu = np.sqrt(k**2 + 1)
+    nu = k
     Phi_nu_l_value = Phi_nu_l_cached(nu, l, rho)
     Y_lm_real_value = Y_lm_real_cached(l, m, theta, phi)
     return Phi_nu_l_value * Y_lm_real_value
@@ -80,34 +80,46 @@ def Q_k_lm_cached(k, l, m, rho, theta, phi):
 
 # Parallelize the expensive computation of Phi_nu_l and Y_lm_real
 def parallel_Phi_Y_lm(lm_pairs, k_value, all_images):
-    """Parallel computation of Phi_nu_l and Y_lm_real for all lm_pairs and images."""
+    """Parallel computation of Phi_nu_l and Y_lm_real for all lm_pairs and images, preserving original indices."""
     
-    def compute_Phi_Y_lm(l, m, k_value, rho, theta, phi):
-        nu = np.sqrt(k_value**2 + 1)
+    def compute_Phi_Y_lm(l, m, k_value, original_idx, rho, theta, phi):
+        nu = k_value
         Phi_nu_l_val = Phi_nu_l_cached(nu, l, rho)
         Y_lm_real_val = Y_lm_real_cached(l, m, theta, phi)
-        return (rho, theta, phi), Phi_nu_l_val * Y_lm_real_val
+        return original_idx, (rho, theta, phi), (l, m), Phi_nu_l_val * Y_lm_real_val
 
-    # Parallelizing the computation across all lm pairs and image points
+    # Compute total tasks
     total_tasks = len(lm_pairs) * len(all_images)
     with tqdm(total=total_tasks, desc="Precomputing Phi and Y_lm values", unit="task", dynamic_ncols=True) as pbar:
         results = Parallel(n_jobs=-1)(
-            delayed(compute_Phi_Y_lm)(l, m, k_value, rho, theta, phi)
+            delayed(compute_Phi_Y_lm)(l, m, k_value, original_idx, rho, theta, phi)
             for l, m in lm_pairs
-            for rho, theta, phi in all_images
+            for original_idx, rho, theta, phi in all_images
         )
         pbar.update(total_tasks)
 
-    # Convert the results into a dictionary
-    q_values_dict = {result[0]: result[1] for result in results}
+    # Organize results into a nested dictionary
+    q_values_dict = {}
+    for original_idx, coords, lm_pair, value in results:
+        if original_idx not in q_values_dict:
+            q_values_dict[original_idx] = {}
+        if coords not in q_values_dict[original_idx]:
+            q_values_dict[original_idx][coords] = {}
+        q_values_dict[original_idx][coords][lm_pair] = value
+
     return q_values_dict
 
 # Parallelize the Q_k_lm computation
 def parallel_Q_k_lm_compute(lm_pairs, k_value, points_images):
-    """Compute Q_k_lm for all lm pairs and points_images in parallel."""
-    all_images = [(rho, theta, phi) for point_images in points_images for (rho, theta, phi) in point_images]
+    """Compute Q_k_lm for all lm pairs and points_images in parallel, preserving grouping."""
+    # Flatten points_images with original indices
+    all_images = [
+        (original_idx, rho, theta, phi)
+        for original_idx, point_images in enumerate(points_images)
+        for (rho, theta, phi) in point_images
+    ]
     
-    # Use joblib to parallelize the computations of Phi_nu_l and Y_lm
+    # Compute q_values_dict with preserved mapping
     q_values_dict = parallel_Phi_Y_lm(lm_pairs, k_value, all_images)
     
     return q_values_dict
