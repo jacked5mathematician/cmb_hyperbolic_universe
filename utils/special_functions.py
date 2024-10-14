@@ -88,16 +88,12 @@ def parallel_Phi_Y_lm(lm_pairs, k_value, all_images):
         Y_lm_real_val = Y_lm_real_cached(l, m, theta, phi)
         return original_idx, (rho, theta, phi), (l, m), Phi_nu_l_val * Y_lm_real_val
 
-    # Compute total tasks
-    total_tasks = len(lm_pairs) * len(all_images)
-    with tqdm(total=total_tasks, desc="Precomputing Phi and Y_lm values", unit="task", dynamic_ncols=True) as pbar:
-        results = Parallel(n_jobs=-1)(
-            delayed(compute_Phi_Y_lm)(l, m, k_value, original_idx, rho, theta, phi)
-            for l, m in lm_pairs
-            for original_idx, rho, theta, phi in all_images
-        )
-        pbar.update(total_tasks)
-
+    
+    results = Parallel(n_jobs=-1)(
+        delayed(compute_Phi_Y_lm)(l, m, k_value, original_idx, rho, theta, phi)
+        for l, m in lm_pairs
+        for original_idx, rho, theta, phi in all_images
+    )
     # Organize results into a nested dictionary
     q_values_dict = {}
     for original_idx, coords, lm_pair, value in results:

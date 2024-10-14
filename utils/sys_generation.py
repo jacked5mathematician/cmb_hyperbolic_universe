@@ -78,21 +78,19 @@ def compute_column(l, m, k_value, points_images, q_values, n_jobs=-1):
 
     return column
 
-def generate_matrix_system(precomputed_data, k_value):
+def generate_matrix_system(q_values, points_images, L_value, k_value):
     """
     Generate the matrix system using precomputed q_values and points_images.
 
     Parameters:
-    - precomputed_data: The dictionary with precomputed q_values and points_images.
+    - q_values: Precomputed q_values for the current k value.
+    - points_images: Precomputed points_images for the current k value.
+    - L_value: The L value used for generating lm pairs.
     - k_value: Current k value.
 
     Returns:
     - The generated matrix system.
     """
-    # Retrieve precomputed q_values and points_images
-    q_values = precomputed_data[k_value]['q_values']
-    points_images = precomputed_data[k_value]['points_images']
-    L_value = precomputed_data[k_value]['L_value']
 
     valid_points = len(points_images)  # Number of valid points used
 
