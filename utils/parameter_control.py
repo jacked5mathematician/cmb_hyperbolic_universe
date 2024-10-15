@@ -134,17 +134,17 @@ def determine_tiling_radius(inside_points, pairing_matrices, L, c, min_images=5,
     while ensuring each point has at least the minimum number of images within the range [rho_min, rho_max].
     """
 
-    print(f"Starting determine_tiling_radius with min_images={min_images}, tolerance={tolerance}, initial_step_size={initial_step_size}")
+    #print(f"Starting determine_tiling_radius with min_images={min_images}, tolerance={tolerance}, initial_step_size={initial_step_size}")
     
     # Step 1: Compute the target number of rows M based on L and c
     M_desired, N = compute_target_M(L, c)
-    print(f"Target number of rows (M_desired): {M_desired}")
+    #print(f"Target number of rows (M_desired): {M_desired}")
     
     # Step 2: Compute the initial average rho value
     classified_transformed_points = generate_transformed_points(inside_points, pairing_matrices)
     all_rho_values = np.array([image[0] for images in classified_transformed_points.values() for image in images])
     avg_rho = np.mean(all_rho_values)
-    print(f"Initial average rho value: {avg_rho}")
+    #print(f"Initial average rho value: {avg_rho}")
     
     # Step 3: Initialize rho_min and rho_max at avg_rho
     rho_min = avg_rho

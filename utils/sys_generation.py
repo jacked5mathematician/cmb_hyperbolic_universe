@@ -1,10 +1,7 @@
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
-from tqdm import tqdm  # Import for progress bars
+from joblib import Parallel, delayed
+import numpy as np
 from utils.special_functions import parallel_Q_k_lm_compute
 import mpmath as mp
-import sympy as sp
-import numpy as np
-from joblib import Parallel, delayed
 
 # Ensure picklability for special numeric types
 def ensure_picklable(value):
@@ -16,9 +13,7 @@ def ensure_picklable(value):
         return float(value.evalf())
     return value
 
-# Parallelized and cache-optimized version of compute_colum
-
-def compute_column(l, m, k_value, points_images, q_values, n_jobs=-1):
+def compute_column(l, m, k_value, points_images, q_values, n_jobs=1):
     """Optimized compute_column with joblib parallelization."""
     column = []
 
@@ -32,7 +27,6 @@ def compute_column(l, m, k_value, points_images, q_values, n_jobs=-1):
 
         return Q_alpha - Q_beta
 
-    # Parallelize the column computation with Joblib
     for images in points_images:
         n_j = len(images)
         pairs = [(alpha, beta) for alpha in range(n_j) for beta in range(alpha + 1, n_j)]
@@ -48,26 +42,16 @@ def generate_matrix_system(points_images, L, k_value, valid_points):
 
     d = valid_points  # Number of points inside the domain
 
-    # Check and debug structure of points_images
-    if not isinstance(points_images, list) or not all(isinstance(img, list) for img in points_images):
-        print("Invalid structure detected for points_images.")
-        raise ValueError("points_images should be a list of lists of tuples (rho, theta, phi).")
-
     lm_pairs = [(l, m) for l in range(L + 1) for m in range(-l, l + 1)]
-
-    # Print progress for matrix generation
-    print(f"Generating matrix system for k = {k_value}, L = {L}, with d = {d} points.")
 
     # Use the parallelized Q_k_lm computation
     q_values = parallel_Q_k_lm_compute(lm_pairs, k_value, points_images)
 
-    # Joblib Parallel for parallel processing with a dynamic progress bar
+    # Generate matrix columns without redundant progress bars
     columns = Parallel(n_jobs=-1)(
         delayed(compute_column)(l, m, k_value, points_images, q_values)
-        for l, m in tqdm(lm_pairs, total=len(lm_pairs), desc="Generating matrix columns", ascii=False)
+        for l, m in lm_pairs
     )
-
-    print("Matrix generation completed.")
 
     # Transpose the result to get columns as needed
     matrix_system = list(map(list, zip(*columns)))
@@ -80,7 +64,7 @@ def construct_numeric_matrix(matrix_system, k_value):
     M = len(matrix_system)
     N = len(matrix_system[0])
     A = np.zeros((M, N), dtype=complex)  # Ensure the matrix is complex
-    
+
     # Iterate over rows and columns, converting to Python complex numbers if needed
     for i in range(M):
         for j in range(N):
@@ -90,5 +74,4 @@ def construct_numeric_matrix(matrix_system, k_value):
             else:
                 A[i, j] = entry  # Assume already numeric
 
-    print(f"Constructed matrix for k = {k_value}: size = {M} x {N}")
     return A

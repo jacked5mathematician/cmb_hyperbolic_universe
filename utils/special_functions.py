@@ -69,7 +69,7 @@ def Y_lm_real_cached(l, m, theta, phi):
 
 # Full eigenfunction Q_{k,l,m}(rho, theta, phi) using Phi_nu_l
 def Q_k_lm(k, l, m, rho, theta, phi):
-    nu = np.sqrt(k**2 + 1)
+    nu = k
     Phi_nu_l_value = Phi_nu_l_cached(nu, l, rho)
     Y_lm_real_value = Y_lm_real_cached(l, m, theta, phi)
     return Phi_nu_l_value * Y_lm_real_value
@@ -79,35 +79,36 @@ def Q_k_lm_cached(k, l, m, rho, theta, phi):
     return Q_k_lm(k, l, m, rho, theta, phi)
 
 # Parallelize the expensive computation of Phi_nu_l and Y_lm_real
-def parallel_Phi_Y_lm(lm_pairs, k_value, all_images):
+# Parallelize the Q_k_lm computation
+
+
+def parallel_Phi_Y_lm(lm_pairs, k_value, all_images, n_jobs=-1):
     """Parallel computation of Phi_nu_l and Y_lm_real for all lm_pairs and images."""
-    
-    def compute_Phi_Y_lm(l, m, k_value, rho, theta, phi):
-        nu = np.sqrt(k_value**2 + 1)
+
+    def compute_Phi_Y_lm(args):
+        l, m, rho, theta, phi = args
+        nu = k_value
         Phi_nu_l_val = Phi_nu_l_cached(nu, l, rho)
         Y_lm_real_val = Y_lm_real_cached(l, m, theta, phi)
         return (rho, theta, phi), Phi_nu_l_val * Y_lm_real_val
 
-    # Parallelizing the computation across all lm pairs and image points
-    total_tasks = len(lm_pairs) * len(all_images)
-    with tqdm(total=total_tasks, desc="Precomputing Phi and Y_lm values", unit="task", dynamic_ncols=True) as pbar:
-        results = Parallel(n_jobs=-1)(
-            delayed(compute_Phi_Y_lm)(l, m, k_value, rho, theta, phi)
-            for l, m in lm_pairs
-            for rho, theta, phi in all_images
-        )
-        pbar.update(total_tasks)
+    # Prepare arguments for parallel computation
+    tasks = [(l, m, rho, theta, phi) for l, m in lm_pairs for rho, theta, phi in all_images]
+
+    # Parallelizing the computation
+    results = Parallel(n_jobs=n_jobs)(
+        delayed(compute_Phi_Y_lm)(args) for args in tasks
+    )
 
     # Convert the results into a dictionary
     q_values_dict = {result[0]: result[1] for result in results}
     return q_values_dict
 
-# Parallelize the Q_k_lm computation
 def parallel_Q_k_lm_compute(lm_pairs, k_value, points_images):
     """Compute Q_k_lm for all lm pairs and points_images in parallel."""
     all_images = [(rho, theta, phi) for point_images in points_images for (rho, theta, phi) in point_images]
-    
+
     # Use joblib to parallelize the computations of Phi_nu_l and Y_lm
     q_values_dict = parallel_Phi_Y_lm(lm_pairs, k_value, all_images)
-    
+
     return q_values_dict

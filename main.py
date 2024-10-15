@@ -1,5 +1,4 @@
 import numpy as np
-import random
 from utils import (
     build_dirichlet_domain,
     generate_random_points_in_domain,
@@ -48,7 +47,68 @@ def profile_function(func, *args, **kwargs):
 
     return result
 
-# Main function
+def process_k_values_chunk(process_index, k_values_chunk, inside_points, pairing_matrices, min_images, tolerance, manifold_name):
+    chi_squared_values_chunk = []
+    k_values_processed = []
+
+    # Initialize variables per process
+    previous_c_value = None
+    classified_transformed_points = None
+    rho_min, rho_max = None, None
+    selected_points = None
+    selected_transformed_points = None
+    L = None
+
+    for k_value in tqdm(k_values_chunk, desc=f"Processing k_values (Chunk {process_index+1})"):
+        # Compute new c and L based on the current k_value
+        new_c_value = 10 + round(100 / k_value)
+        new_L_value = 10 + round(k_value)
+
+        # Only recompute the tiling radius if the value of c has changed
+        if new_c_value != previous_c_value:
+            # Compute the tiling radius for the new value of c
+            classified_transformed_points, rho_min, rho_max, valid_points = determine_tiling_radius(
+                inside_points, pairing_matrices, new_L_value, new_c_value, min_images, tolerance
+            )
+
+            # If the tiling radius failed, skip this k_value
+            if classified_transformed_points is None:
+                print(f"Error: Could not determine tiling radius for k = {k_value}.")
+                continue
+
+            # Calculate the target number of rows (M) based on the degree of over-constraint (c) and L
+            M_desired, N = compute_target_M(new_L_value, new_c_value)
+
+            # Filter and select points for the desired over-constraint
+            selected_points, selected_transformed_points = filter_points_for_overconstraint(
+                classified_transformed_points, inside_points, M_desired
+            )
+
+            # Convert the dictionary selected_transformed_points to a list of lists of tuples
+            points_images = convert_to_points_images(selected_transformed_points)
+
+            # Update the previous c value to the new one
+            previous_c_value = new_c_value
+
+        # Use the filtered points for matrix generation
+        valid_points = len(selected_points)
+
+        # Compute matrix system and chi-squared values using filtered matrix system
+        _, _, matrix_system = generate_matrix_system(points_images, new_L_value, k_value, valid_points)
+
+        # Skip if the matrix system is empty
+        if len(matrix_system) == 0 or len(matrix_system[0]) == 0:
+            print(f"Error: matrix_system is empty for k = {k_value}")
+            continue
+
+        # Construct the numeric matrix
+        A = construct_numeric_matrix(matrix_system, k_value)
+        chi_squared, _ = solve_system_via_svd_numeric(A)
+        chi_squared_values_chunk.append(chi_squared)
+        k_values_processed.append(k_value)
+
+    return chi_squared_values_chunk, k_values_processed
+
 def main():
     manifold_name = 'm188(-1,1)'  # Example manifold name
     num_points = 10000  # Number of random points to generate
@@ -56,7 +116,9 @@ def main():
     tolerance = 0.1  # Allow small deviations in rho
     resolution = 400  # Resolution for the k values
     k_values = np.linspace(1.0, 10.0, resolution)  # Range of k values
-    
+
+    num_chunks = 4  # Number of chunks to process sequentially
+    k_values_chunks = np.array_split(k_values, num_chunks)
 
     # Step 1: Build Dirichlet domain
     domain_data = build_dirichlet_domain(manifold_name)
@@ -72,78 +134,23 @@ def main():
     inside_points = filter_points_in_domain(points, faces, vertices)
     print(f"Number of points found inside the domain: {len(inside_points)}")
 
-    # Initialize variables to track when c and L change
-    previous_c_value = None
-    classified_transformed_points = None
-    rho_min, rho_max = None, None
-    valid_points = None
-    selected_points = None
-    selected_transformed_points = None
-    L = None
-
-    # Step 4: Iterate over k_values and adjust the over-constraint based on k
     chi_squared_values = []
-    for k_value in tqdm(k_values, desc="Computing Matrix for each k"):
-        # Compute new c and L based on the current k_value
-        new_c_value = 10 + round(100 / k_value)
-        new_L_value = 10 + round(k_value)
+    k_values_collected = []
 
-        # Print the new L value if it has changed
-        if L != new_L_value:
-            L = new_L_value
-            print(f"New angular momentum value: {L}")
-        else:
-            print(f"Angular momentum value: {L}")
+    for process_index, k_values_chunk in enumerate(k_values_chunks):
+        chi_squared_chunk, k_values_chunk_processed = process_k_values_chunk(
+            process_index, k_values_chunk, inside_points, pairing_matrices, min_images, tolerance, manifold_name
+        )
+        k_values_collected.extend(k_values_chunk_processed)
+        chi_squared_values.extend(chi_squared_chunk)
 
-        # Only recompute the tiling radius if the value of c has changed
-        if new_c_value != previous_c_value:
-            print(f"Computing tiling radius for k = {k_value}, c = {new_c_value}")
-
-            # Compute the tiling radius for the new value of c
-            classified_transformed_points, rho_min, rho_max, valid_points = determine_tiling_radius(
-                inside_points, pairing_matrices, L, new_c_value, min_images, tolerance
-            )
-
-            # If the tiling radius failed, stop the process
-            if classified_transformed_points is None:
-                print(f"Error: Could not determine tiling radius for k = {k_value}. Aborting.")
-                return
-
-            # Step 5: Calculate the target number of rows (M) based on the degree of over-constraint (c) and L
-            M_desired, N = compute_target_M(L, new_c_value)
-
-            # Step 6: Filter and select points for the desired over-constraint
-            selected_points, selected_transformed_points = filter_points_for_overconstraint(
-                classified_transformed_points, inside_points, M_desired
-            )
-
-            # Convert the dictionary selected_transformed_points to a list of lists of tuples
-            points_images = convert_to_points_images(selected_transformed_points)
-
-            # Update the previous c value to the new one
-            previous_c_value = new_c_value
-
-        # Step 7: Use the filtered points from `filter_points_for_overconstraint` for matrix generation
-        # Ensure that valid_points is updated to the number of points selected by `filter_points_for_overconstraint`
-        valid_points = len(selected_points)
-        print(f"Number of valid points used: {valid_points}")
-
-        # Compute matrix system and chi-squared values using filtered matrix system
-        _, _, matrix_system = generate_matrix_system(points_images, L, k_value, valid_points)
-
-        # Skip if the matrix system is empty
-        if len(matrix_system) == 0 or len(matrix_system[0]) == 0:
-            print(f"Error: matrix_system is empty for k = {k_value}")
-            continue
-
-        # Construct the numeric matrix
-        A = construct_numeric_matrix(matrix_system, k_value)
-        chi_squared, _ = solve_system_via_svd_numeric(A)
-        chi_squared_values.append(chi_squared)
+    # Sort the results by k_values
+    sorted_indices = np.argsort(k_values_collected)
+    k_values_sorted = np.array(k_values_collected)[sorted_indices]
+    chi_squared_values_sorted = np.array(chi_squared_values)[sorted_indices]
 
     # Step 8: Plot the chi-squared spectrum
-    plot_chi_squared_spectrum(k_values, chi_squared_values, manifold_name, resolution)
-
+    plot_chi_squared_spectrum(k_values_sorted, chi_squared_values_sorted, manifold_name, resolution)
 
 if __name__ == "__main__":
     profile_function(main)
