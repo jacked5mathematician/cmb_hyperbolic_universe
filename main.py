@@ -68,9 +68,8 @@ def process_k_values_chunk(process_index, k_values_chunk, inside_points, pairing
         if new_c_value != previous_c_value:
             # Compute the tiling radius for the new value of c
             classified_transformed_points, rho_min, rho_max, valid_points = determine_tiling_radius(
-                inside_points, pairing_matrices, new_L_value, new_c_value, min_images, tolerance
+            inside_points, pairing_matrices, new_L_value, new_c_value, min_images, tolerance
             )
-
             # If the tiling radius failed, skip this k_value
             if classified_transformed_points is None:
                 print(f"Error: Could not determine tiling radius for k = {k_value}.")
@@ -138,6 +137,7 @@ def main():
     k_values_collected = []
 
     for process_index, k_values_chunk in enumerate(k_values_chunks):
+        print(f"Process {process_index+1} starting with k_values_chunk of size {len(k_values_chunk)}")
         chi_squared_chunk, k_values_chunk_processed = process_k_values_chunk(
             process_index, k_values_chunk, inside_points, pairing_matrices, min_images, tolerance, manifold_name
         )

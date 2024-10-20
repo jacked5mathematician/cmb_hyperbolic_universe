@@ -60,14 +60,12 @@ def filter_points_for_overconstraint(classified_transformed_points, inside_point
     - selected_transformed_points: The transformed points for the selected points.
     """
     # Calculate n_j for each point
-    n_j_values = [(idx, len(images)) for idx, images in classified_transformed_points.items()]
+    n_j_values = [(idx, len(images)) for idx, images in enumerate(classified_transformed_points)]
     
-    # Select points to match the desired number of rows M
     selected_indices = select_points_for_c(n_j_values, M_desired)
     
-    # Extract the selected points and their transformed images
     selected_points = [inside_points[idx] for idx in selected_indices]
-    selected_transformed_points = {idx: classified_transformed_points[idx] for idx in selected_indices}
+    selected_transformed_points = [classified_transformed_points[idx] for idx in selected_indices]
     
     return selected_points, selected_transformed_points
 
@@ -142,7 +140,7 @@ def determine_tiling_radius(inside_points, pairing_matrices, L, c, min_images=5,
     
     # Step 2: Compute the initial average rho value
     classified_transformed_points = generate_transformed_points(inside_points, pairing_matrices)
-    all_rho_values = np.array([image[0] for images in classified_transformed_points.values() for image in images])
+    all_rho_values = np.array([image[0] for images in classified_transformed_points for image in images])
     avg_rho = np.mean(all_rho_values)
     #print(f"Initial average rho value: {avg_rho}")
     
@@ -156,7 +154,7 @@ def determine_tiling_radius(inside_points, pairing_matrices, L, c, min_images=5,
     start_time = time.time()
 
     # Convert dictionary to a list of lists of arrays (structure that Numba supports)
-    images_list = [np.array([img for img in images]) for images in classified_transformed_points.values()]
+    images_list = [np.array(images) for images in classified_transformed_points]
 
     # Step 4: Iterate to adjust rho_min and rho_max until M_desired rows are achieved
     while iteration < max_iterations:
@@ -196,10 +194,14 @@ def determine_tiling_radius(inside_points, pairing_matrices, L, c, min_images=5,
     print(f"Final rho_min: {rho_min}, Final rho_max: {rho_max} (Time: {time.time() - start_time:.2f} seconds)")
 
     # Step 5: Filter images to ensure they are within the final [rho_min, rho_max]
-    final_points = {}
-    for idx, images in classified_transformed_points.items():
+    # At the end of the function
+    # Initialize final_images_list as a list of the same length as inside_points
+    final_images_list = []
+    for images in images_list:
         filtered_images = binary_search_filter(images, rho_min - tolerance, rho_max + tolerance)
-        if len(filtered_images) > 0:
-            final_points[idx] = filtered_images
-
-    return final_points, rho_min, rho_max, valid_points
+        if len(filtered_images) >= min_images:
+            final_images_list.append(filtered_images)
+        else:
+            final_images_list.append([])
+            
+    return final_images_list, rho_min, rho_max, valid_points

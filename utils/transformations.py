@@ -44,32 +44,27 @@ def klein_to_pseudo_spherical(points):
 
 # Generate transformed points by applying the group generators
 def generate_transformed_points(inside_points, pairing_matrices):
-    classified_points = {i: [] for i in range(len(inside_points))}
+    classified_points = []
     inside_points = np.array(inside_points)
     
-    for i, point in enumerate(inside_points):
+    for point in inside_points:
         hyperboloid_points = np.array([apply_so31_action(matrix, point) for matrix in pairing_matrices])
         klein_points = project_to_klein(hyperboloid_points)
         pseudo_spherical_points = klein_to_pseudo_spherical(klein_points)
         
-        for pseudo_spherical_point in pseudo_spherical_points:
-            classified_points[i].append(pseudo_spherical_point)
+        classified_points.append(pseudo_spherical_points)
     
     return classified_points
 
-def convert_to_points_images(classified_transformed_points):
+def convert_to_points_images(selected_transformed_points):
     """
-    Converts the dictionary structure of classified_transformed_points to a list of lists of tuples.
+    Converts the list of arrays to a list of lists of tuples.
     Each tuple represents a point in (rho, theta, phi) coordinates.
     """
     points_images = []
     
-    for key, images in classified_transformed_points.items():
-        point_list = []
-        for image in images:
-            # Convert array to tuple
-            point_tuple = tuple(image)  # Assumes image is a numpy array like [rho, theta, phi]
-            point_list.append(point_tuple)
+    for images in selected_transformed_points:
+        point_list = [tuple(image) for image in images]
         points_images.append(point_list)
     
     return points_images

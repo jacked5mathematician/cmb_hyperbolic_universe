@@ -50,33 +50,13 @@ def Y_lm_real(l, m, theta, phi):
         return normalization_constant(l, 0) * lpmv(0, l, np.cos(theta))
 
 # Global cache dictionaries for Q functions
-phi_cache = {}
-y_lm_cache = {}
-
-def Phi_nu_l_cached(nu, l, chi):
-    """Cached version of the hyperspherical Bessel function Phi^nu_l(chi) for K = -1."""
-    key = (nu, l, chi)
-    if key not in phi_cache:
-        phi_cache[key] = Phi_nu_l(nu, l, chi)
-    return phi_cache[key]
-
-def Y_lm_real_cached(l, m, theta, phi):
-    """Cached version of the real-valued spherical harmonics function."""
-    key = (l, m, theta, phi)
-    if key not in y_lm_cache:
-        y_lm_cache[key] = Y_lm_real(l, m, theta, phi)
-    return y_lm_cache[key]
 
 # Full eigenfunction Q_{k,l,m}(rho, theta, phi) using Phi_nu_l
 def Q_k_lm(k, l, m, rho, theta, phi):
     nu = k
-    Phi_nu_l_value = Phi_nu_l_cached(nu, l, rho)
-    Y_lm_real_value = Y_lm_real_cached(l, m, theta, phi)
+    Phi_nu_l_value = Phi_nu_l(nu, l, rho)
+    Y_lm_real_value = Y_lm_real(l, m, theta, phi)
     return Phi_nu_l_value * Y_lm_real_value
-
-@lru_cache(maxsize=None)
-def Q_k_lm_cached(k, l, m, rho, theta, phi):
-    return Q_k_lm(k, l, m, rho, theta, phi)
 
 # Parallelize the expensive computation of Phi_nu_l and Y_lm_real
 # Parallelize the Q_k_lm computation
@@ -88,8 +68,8 @@ def parallel_Phi_Y_lm(lm_pairs, k_value, all_images, n_jobs=-1):
     def compute_Phi_Y_lm(args):
         l, m, rho, theta, phi = args
         nu = k_value
-        Phi_nu_l_val = Phi_nu_l_cached(nu, l, rho)
-        Y_lm_real_val = Y_lm_real_cached(l, m, theta, phi)
+        Phi_nu_l_val = Phi_nu_l(nu, l, rho)
+        Y_lm_real_val = Y_lm_real(l, m, theta, phi)
         return (rho, theta, phi), Phi_nu_l_val * Y_lm_real_val
 
     # Prepare arguments for parallel computation
