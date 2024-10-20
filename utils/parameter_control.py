@@ -82,7 +82,6 @@ import numpy as np
 from numba import njit, prange
 
 
-@njit
 def binary_search_filter(images_rho_sorted, rho_min, rho_max):
     """Binary search to filter images efficiently within a rho range."""
     left_idx = 0
@@ -109,7 +108,6 @@ def binary_search_filter(images_rho_sorted, rho_min, rho_max):
     # Now slice the array based on valid bounds
     return images_rho_sorted[left_bound:right_idx]
 
-@njit(parallel=True)
 def process_images(images_list, rho_min, rho_max, min_images):
     """Parallelized function to process image filtering."""
     total_rows = 0
@@ -193,7 +191,7 @@ def determine_tiling_radius(inside_points, pairing_matrices, L, c, min_images=5,
             print(f"Warning: Max iterations reached. Could not fully satisfy the M_desired condition or minimum image requirement.")
             break
 
-    print(f"Final rho_min: {rho_min}, Final rho_max: {rho_max} (Time: {time.time() - start_time:.2f} seconds)")
+    #print(f"Final rho_min: {rho_min}, Final rho_max: {rho_max} (Time: {time.time() - start_time:.2f} seconds)")
 
     # Step 5: Filter images to ensure they are within the final [rho_min, rho_max]
     final_points = {}

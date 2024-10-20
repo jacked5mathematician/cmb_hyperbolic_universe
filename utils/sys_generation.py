@@ -48,7 +48,7 @@ def generate_matrix_system(points_images, L, k_value, valid_points):
     q_values = parallel_Q_k_lm_compute(lm_pairs, k_value, points_images)
 
     # Generate matrix columns without redundant progress bars
-    columns = Parallel(n_jobs=-1)(
+    columns = Parallel(n_jobs=1)(
         delayed(compute_column)(l, m, k_value, points_images, q_values)
         for l, m in lm_pairs
     )

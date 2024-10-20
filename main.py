@@ -14,10 +14,11 @@ from utils import (
     construct_numeric_matrix 
 )
 from tqdm import tqdm  # Import for progress bars
-
+from joblib import Parallel, delayed
 import cProfile
 import pstats
 import io
+from tqdm_joblib import tqdm_joblib
 
 # Profiler function to wrap any function you want to profile
 def profile_function(func, *args, **kwargs):
@@ -47,7 +48,7 @@ def profile_function(func, *args, **kwargs):
 
     return result
 
-def process_k_values_chunk(process_index, k_values_chunk, inside_points, pairing_matrices, min_images, tolerance, manifold_name):
+def process_k_values_chunk(process_index, k_values_chunk, inside_points, pairing_matrices, min_images, tolerance, manifold_name, num_chunks):
     chi_squared_values_chunk = []
     k_values_processed = []
 
@@ -59,53 +60,59 @@ def process_k_values_chunk(process_index, k_values_chunk, inside_points, pairing
     selected_transformed_points = None
     L = None
 
-    for k_value in tqdm(k_values_chunk, desc=f"Processing k_values (Chunk {process_index+1})"):
-        # Compute new c and L based on the current k_value
-        new_c_value = 10 + round(100 / k_value)
-        new_L_value = 10 + round(k_value)
+    # Unique description for each process
+    process_desc = f"Chunk {process_index+1}/{num_chunks}"
 
-        # Only recompute the tiling radius if the value of c has changed
-        if new_c_value != previous_c_value:
-            # Compute the tiling radius for the new value of c
-            classified_transformed_points, rho_min, rho_max, valid_points = determine_tiling_radius(
-                inside_points, pairing_matrices, new_L_value, new_c_value, min_images, tolerance
-            )
+    # Initialize tqdm with position to prevent overlapping
+    with tqdm(k_values_chunk, desc=process_desc, position=process_index, leave=False) as pbar:
+        for k_value in pbar:
+            # Compute new c and L based on the current k_value
+            new_c_value = 10 + round(100 / k_value)
+            new_L_value = 10 + round(k_value)
 
-            # If the tiling radius failed, skip this k_value
-            if classified_transformed_points is None:
-                print(f"Error: Could not determine tiling radius for k = {k_value}.")
+            # Only recompute the tiling radius if the value of c has changed
+            if new_c_value != previous_c_value:
+                # Compute the tiling radius for the new value of c
+                result = determine_tiling_radius(
+                    inside_points, pairing_matrices, new_L_value, new_c_value, min_images, tolerance
+                )
+
+                if result is None:
+                    print(f"Error: Could not determine tiling radius for k = {k_value}.")
+                    continue
+
+                classified_transformed_points, rho_min, rho_max, valid_points = result
+
+                # Calculate the target number of rows (M) based on the degree of over-constraint (c) and L
+                M_desired, N = compute_target_M(new_L_value, new_c_value)
+
+                # Filter and select points for the desired over-constraint
+                selected_points, selected_transformed_points = filter_points_for_overconstraint(
+                    classified_transformed_points, inside_points, M_desired
+                )
+
+                # Convert the dictionary selected_transformed_points to a list of lists of tuples
+                points_images = convert_to_points_images(selected_transformed_points)
+
+                # Update the previous c value to the new one
+                previous_c_value = new_c_value
+
+            # Use the filtered points for matrix generation
+            valid_points = len(selected_points)
+
+            # Compute matrix system and chi-squared values using filtered matrix system
+            _, _, matrix_system = generate_matrix_system(points_images, new_L_value, k_value, valid_points)
+
+            # Skip if the matrix system is empty
+            if len(matrix_system) == 0 or len(matrix_system[0]) == 0:
+                print(f"Error: matrix_system is empty for k = {k_value}")
                 continue
 
-            # Calculate the target number of rows (M) based on the degree of over-constraint (c) and L
-            M_desired, N = compute_target_M(new_L_value, new_c_value)
-
-            # Filter and select points for the desired over-constraint
-            selected_points, selected_transformed_points = filter_points_for_overconstraint(
-                classified_transformed_points, inside_points, M_desired
-            )
-
-            # Convert the dictionary selected_transformed_points to a list of lists of tuples
-            points_images = convert_to_points_images(selected_transformed_points)
-
-            # Update the previous c value to the new one
-            previous_c_value = new_c_value
-
-        # Use the filtered points for matrix generation
-        valid_points = len(selected_points)
-
-        # Compute matrix system and chi-squared values using filtered matrix system
-        _, _, matrix_system = generate_matrix_system(points_images, new_L_value, k_value, valid_points)
-
-        # Skip if the matrix system is empty
-        if len(matrix_system) == 0 or len(matrix_system[0]) == 0:
-            print(f"Error: matrix_system is empty for k = {k_value}")
-            continue
-
-        # Construct the numeric matrix
-        A = construct_numeric_matrix(matrix_system, k_value)
-        chi_squared, _ = solve_system_via_svd_numeric(A)
-        chi_squared_values_chunk.append(chi_squared)
-        k_values_processed.append(k_value)
+            # Construct the numeric matrix
+            A = construct_numeric_matrix(matrix_system, k_value)
+            chi_squared, _ = solve_system_via_svd_numeric(A)
+            chi_squared_values_chunk.append(chi_squared)
+            k_values_processed.append(k_value)
 
     return chi_squared_values_chunk, k_values_processed
 
@@ -117,7 +124,7 @@ def main():
     resolution = 400  # Resolution for the k values
     k_values = np.linspace(1.0, 10.0, resolution)  # Range of k values
 
-    num_chunks = 4  # Number of chunks to process sequentially
+    num_chunks = 16  # Number of chunks to process in parallel
     k_values_chunks = np.array_split(k_values, num_chunks)
 
     # Step 1: Build Dirichlet domain
@@ -137,10 +144,18 @@ def main():
     chi_squared_values = []
     k_values_collected = []
 
-    for process_index, k_values_chunk in enumerate(k_values_chunks):
-        chi_squared_chunk, k_values_chunk_processed = process_k_values_chunk(
-            process_index, k_values_chunk, inside_points, pairing_matrices, min_images, tolerance, manifold_name
+    # Initialize the progress bar
+    with tqdm_joblib(tqdm(desc="Processing Chunks", total=num_chunks)) as progress_bar:
+        # Parallel processing of chunks
+        results = Parallel(n_jobs=num_chunks)(
+            delayed(process_k_values_chunk)(
+                process_index, k_values_chunk, inside_points, pairing_matrices,
+                min_images, tolerance, manifold_name, num_chunks
+            )
+            for process_index, k_values_chunk in enumerate(k_values_chunks)
         )
+
+    for chi_squared_chunk, k_values_chunk_processed in results:
         k_values_collected.extend(k_values_chunk_processed)
         chi_squared_values.extend(chi_squared_chunk)
 

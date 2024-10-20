@@ -5,6 +5,7 @@ from functools import lru_cache
 from scipy.special import lpmv
 from joblib import Parallel, delayed
 from tqdm import tqdm
+from numba import njit
 
 epsilon = 1e-12  # Small number to avoid division by zero
 mp.dps = 5
@@ -36,7 +37,6 @@ def Phi_nu_l(nu, l, chi):
     Phi = sqrt(pi * N_nu_l / (2 * sinh(chi))) * legendre_value
     return Phi
 
-    
 def normalization_constant(l, m):
     return np.sqrt((2 * l + 1) / (4 * np.pi) * mp.factorial(l - np.abs(m)) / mp.factorial(l + np.abs(m)))
 
@@ -74,7 +74,6 @@ def Q_k_lm(k, l, m, rho, theta, phi):
     Y_lm_real_value = Y_lm_real_cached(l, m, theta, phi)
     return Phi_nu_l_value * Y_lm_real_value
 
-@lru_cache(maxsize=None)
 def Q_k_lm_cached(k, l, m, rho, theta, phi):
     return Q_k_lm(k, l, m, rho, theta, phi)
 
@@ -82,7 +81,7 @@ def Q_k_lm_cached(k, l, m, rho, theta, phi):
 # Parallelize the Q_k_lm computation
 
 
-def parallel_Phi_Y_lm(lm_pairs, k_value, all_images, n_jobs=-1):
+def parallel_Phi_Y_lm(lm_pairs, k_value, all_images, n_jobs=1):
     """Parallel computation of Phi_nu_l and Y_lm_real for all lm_pairs and images."""
 
     def compute_Phi_Y_lm(args):

@@ -19,7 +19,7 @@ def solve_system_via_svd_numeric(A):
 
     end_time = time.time()  # End timing
     elapsed_time = end_time - start_time
-    print(f"SVD computation completed in {elapsed_time:.4f} seconds.")  # Report timing
+    #print(f"SVD computation completed in {elapsed_time:.4f} seconds.")  # Report timing
 
     return chi_squared, a
 
