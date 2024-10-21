@@ -19,6 +19,8 @@ import cProfile
 import pstats
 import io
 from tqdm_joblib import tqdm_joblib
+import argparse
+import sys
 
 # Profiler function to wrap any function you want to profile
 def profile_function(func, *args, **kwargs):
@@ -117,6 +119,14 @@ def process_k_values_chunk(process_index, k_values_chunk, inside_points, pairing
     return chi_squared_values_chunk, k_values_processed
 
 def main():
+    parser = argparse.ArgumentParser(description="Process a chunk of k_values.")
+    parser.add_argument('--chunk_index', type=int, required=True, help='Index of the chunk to process')
+    parser.add_argument('--num_chunks', type=int, default=16, help='Total number of chunks')
+    args = parser.parse_args()
+
+    process_index = args.chunk_index
+    num_chunks = args.num_chunks
+
     manifold_name = 'm188(-1,1)'  # Example manifold name
     num_points = 10000  # Number of random points to generate
     min_images = 20  # Minimum number of images required per point
@@ -124,48 +134,35 @@ def main():
     resolution = 400  # Resolution for the k values
     k_values = np.linspace(1.0, 10.0, resolution)  # Range of k values
 
-    num_chunks = 16  # Number of chunks to process in parallel
+    # Split k_values into chunks
+    num_chunks = 8
     k_values_chunks = np.array_split(k_values, num_chunks)
+    k_values_chunk = k_values_chunks[process_index]
 
-    # Step 1: Build Dirichlet domain
+    # Build Dirichlet domain
     domain_data = build_dirichlet_domain(manifold_name)
     if domain_data is None:
         print("Failed to build Dirichlet domain.")
         return
     vertices, faces, pairing_matrices = domain_data
 
-    # Step 2: Generate random points
+    # Generate random points
     points = generate_random_points_in_domain(vertices, num_points)
 
-    # Step 3: Filter points inside the domain
+    # Filter points inside the domain
     inside_points = filter_points_in_domain(points, faces, vertices)
     print(f"Number of points found inside the domain: {len(inside_points)}")
 
-    chi_squared_values = []
-    k_values_collected = []
+    # Process the single chunk
+    chi_squared_chunk, k_values_chunk_processed = process_k_values_chunk(
+        process_index, k_values_chunk, inside_points, pairing_matrices,
+        min_images, tolerance, manifold_name, num_chunks
+    )
 
-    # Initialize the progress bar
-    with tqdm_joblib(tqdm(desc="Processing Chunks", total=num_chunks)) as progress_bar:
-        # Parallel processing of chunks
-        results = Parallel(n_jobs=num_chunks)(
-            delayed(process_k_values_chunk)(
-                process_index, k_values_chunk, inside_points, pairing_matrices,
-                min_images, tolerance, manifold_name, num_chunks
-            )
-            for process_index, k_values_chunk in enumerate(k_values_chunks)
-        )
-
-    for chi_squared_chunk, k_values_chunk_processed in results:
-        k_values_collected.extend(k_values_chunk_processed)
-        chi_squared_values.extend(chi_squared_chunk)
-
-    # Sort the results by k_values
-    sorted_indices = np.argsort(k_values_collected)
-    k_values_sorted = np.array(k_values_collected)[sorted_indices]
-    chi_squared_values_sorted = np.array(chi_squared_values)[sorted_indices]
-
-    # Step 8: Plot the chi-squared spectrum
-    plot_chi_squared_spectrum(k_values_sorted, chi_squared_values_sorted, manifold_name, resolution)
+    # Save the results to a file specific to this chunk
+    result_filename = f"chi_squared_results_chunk_{process_index}.npz"
+    np.savez(result_filename, k_values=k_values_chunk_processed, chi_squared=chi_squared_chunk)
+    print(f"Results saved to {result_filename}")
 
 if __name__ == "__main__":
     profile_function(main)
