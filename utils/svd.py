@@ -13,23 +13,29 @@ def solve_system_via_svd_numeric(A):
     # Perform Singular Value Decomposition
     U, s, Vt = svd(A, full_matrices=False)
 
-    # Find the index of the smallest singular value
-    smallest_singular_value_index = np.argmin(s)  # This gives the index of the smallest singular value
+    # Get indices of the smallest, second smallest, and third smallest singular values
+    sorted_indices = np.argsort(s)  # Sort indices based on singular values in ascending order
+    
+    # Get the corresponding singular vectors from Vt
+    best_a = Vt[sorted_indices[0]]  # Vector for smallest singular value
+    second_best_a = Vt[sorted_indices[1]]  # Vector for second smallest singular value
+    third_best_a = Vt[sorted_indices[2]]  # Vector for third smallest singular value
 
-    # Get the corresponding singular vector from Vt
-    best_a = Vt[smallest_singular_value_index]  # Get the singular vector corresponding to the smallest singular value
-
-    # Normalize the singular vector
+    # Normalize the singular vectors
     best_a_normalized = best_a / np.linalg.norm(best_a)
+    second_best_a_normalized = second_best_a / np.linalg.norm(second_best_a)
+    third_best_a_normalized = third_best_a / np.linalg.norm(third_best_a)
 
-    # Calculate chi^2 = ||A * a||^2 using the selected singular vector
-    chi_squared = np.linalg.norm(A @ best_a_normalized) ** 2
+    # Calculate chi^2 for each solution
+    chi_squared_best = np.linalg.norm(A @ best_a_normalized) ** 2
+    chi_squared_second_best = np.linalg.norm(A @ second_best_a_normalized) ** 2
+    chi_squared_third_best = np.linalg.norm(A @ third_best_a_normalized) ** 2
     
     end_time = time.time()  # End timing
     elapsed_time = end_time - start_time
     # print(f"SVD computation completed in {elapsed_time:.4f} seconds.")  # Report timing
 
-    return chi_squared, best_a_normalized
+    return (chi_squared_best, chi_squared_second_best, chi_squared_third_best), (best_a_normalized, second_best_a_normalized, third_best_a_normalized)
 
 import matplotlib.pyplot as plt
 from matplotlib import rc
@@ -37,23 +43,43 @@ from matplotlib import rc
 # Enable LaTeX for rendering text in the plot
 rc('text', usetex=True)
 
-def plot_chi_squared_spectrum(k_values, chi_squared_values, manifold_name, resolution):
+import matplotlib.pyplot as plt
+from datetime import datetime
+
+def plot_chi_squared_spectrum(k_values, chi_squared_values, manifold_name, resolution, 
+                              chi_squared_second_best=None, chi_squared_third_best=None, 
+                              show_second_best=False, show_third_best=False):
     plt.figure(figsize=(8, 6))
-    plt.plot(k_values, chi_squared_values, label=r'$\chi^2(k)$ Spectrum', color='blue')
+    
+    # Plot the main chi-squared values
+    plt.plot(k_values, chi_squared_values, label=r'Best $\chi^2(k)$ Spectrum', color='blue')
+
+    # Optionally plot the second best chi-squared values if requested
+    if show_second_best and chi_squared_second_best is not None:
+        plt.plot(k_values, chi_squared_second_best, label=r'Second Best $\chi^2(k)$ Spectrum', linestyle='--', color='green')
+    
+    # Optionally plot the third best chi-squared values if requested
+    if show_third_best and chi_squared_third_best is not None:
+        plt.plot(k_values, chi_squared_third_best, label=r'Third Best $\chi^2(k)$ Spectrum', linestyle=':', color='red')
     
     # LaTeX for axis labels
     plt.xlabel(r'$k$', fontsize=14)
     plt.ylabel(r'$\chi^2$', fontsize=14)
     
     # LaTeX for the title with manifold name
-    plt.title(r'$\chi^2$ Spectrum for {}, with Resolution = {}'.format(manifold_name,resolution), fontsize=16)
+    plt.title(r'$\chi^2$ Spectrum for {}, with Resolution = {}'.format(manifold_name, resolution), fontsize=16)
     
     plt.grid(True)
     plt.legend()
     
-    # Instead of plt.show(), save the plot to a file
-    plt.savefig(f'chi_squared_spectrum_{manifold_name}_{resolution}res.png')  # Save plot as a PNG image
-    print(f"chi_squared_spectrum_{manifold_name}_{resolution}res.png")
+    # Get current date and time
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    
+    # Save the plot with the timestamp in the filename
+    filename = f'chi_squared_spectrum_{manifold_name}_{resolution}res_{timestamp}.png'
+    plt.savefig(filename)  # Save plot as a PNG image
+    
+    print(f"Plot saved as {filename}")
 
 # Function to compute chi^2 for a given k, with progress bar update
 def compute_chi_squared_for_k(k_value, matrix_system):
