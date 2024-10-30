@@ -3,52 +3,46 @@ import numpy as np
 from utils.special_functions import parallel_Q_k_lm_compute
 import mpmath as mp
 
-# Ensure picklability for special numeric types
-def ensure_picklable(value):
-    if isinstance(value, mp.mpf):
-        return float(value)
-    elif isinstance(value, mp.mpc):
-        return complex(value)
-    elif isinstance(value, sp.Basic):
-        return float(value.evalf())
-    return value
-
-def compute_column(l, m, k_value, points_images, q_values, n_jobs=1):
-    """Optimized compute_column with joblib parallelization."""
+def compute_column(l, m, k_value, points_images, q_values):
+    """Vectorized compute_column without explicit loops over image pairs."""
     column = []
-
-    # Helper function to compute the difference between two Q_k_lm values
-    def process_image_pair(alpha, beta, images):
-        rho_alpha, theta_alpha, phi_alpha = images[alpha]
-        rho_beta, theta_beta, phi_beta = images[beta]
-
-        Q_alpha = q_values[(rho_alpha, theta_alpha, phi_alpha)]
-        Q_beta = q_values[(rho_beta, theta_beta, phi_beta)]
-
-        return Q_alpha - Q_beta
 
     for images in points_images:
         n_j = len(images)
-        pairs = [(alpha, beta) for alpha in range(n_j) for beta in range(alpha + 1, n_j)]
-        # Parallel processing of each pair with joblib
-        results = Parallel(n_jobs=n_jobs)(delayed(process_image_pair)(alpha, beta, images) for alpha, beta in pairs)
-        column.extend(results)
+        if n_j < 2:
+            continue  # No pairs to process
+
+        # Convert images to numpy arrays
+        images_array = np.array(images)  # Shape (n_j, 3)
+
+        # Fetch Q_values for all images in this set
+        Q_values_images = np.array([q_values[tuple(img)] for img in images])  # Shape (n_j,)
+
+        # Create indices for pairs where alpha < beta
+        alpha_indices, beta_indices = np.triu_indices(n_j, k=1)
+
+        Q_alpha = Q_values_images[alpha_indices]
+        Q_beta = Q_values_images[beta_indices]
+
+        differences = Q_alpha - Q_beta  # This is a vector of differences
+
+        column.extend(differences)
 
     return column
 
 def generate_matrix_system(points_images, L, k_value, valid_points):
-    # Convert k_value to float if it's not already to ensure it's picklable
     k_value = float(k_value)
-
-    d = valid_points  # Number of points inside the domain
 
     lm_pairs = [(l, m) for l in range(L + 1) for m in range(-l, l + 1)]
 
     # Use the parallelized Q_k_lm computation
     q_values = parallel_Q_k_lm_compute(lm_pairs, k_value, points_images)
 
-    # Generate matrix columns without redundant progress bars
-    columns = Parallel(n_jobs=1)(
+    # Determine the number of jobs based on your system's capabilities
+    n_jobs = 1  # Use all available cores
+
+    # Parallel processing over (l, m) pairs
+    columns = Parallel(n_jobs=n_jobs)(
         delayed(compute_column)(l, m, k_value, points_images, q_values)
         for l, m in lm_pairs
     )
@@ -59,19 +53,26 @@ def generate_matrix_system(points_images, L, k_value, valid_points):
     N_calculated = (L + 1) ** 2  # Number of columns
     return len(matrix_system), N_calculated, matrix_system
 
-# Function to construct the numerical matrix for a given value of k
 def construct_numeric_matrix(matrix_system, k_value):
-    M = len(matrix_system)
-    N = len(matrix_system[0])
-    A = np.zeros((M, N), dtype=complex)  # Ensure the matrix is complex
+    # Convert the matrix_system to a numpy array
+    A = np.array(matrix_system)
 
-    # Iterate over rows and columns, converting to Python complex numbers if needed
-    for i in range(M):
-        for j in range(N):
-            entry = matrix_system[i][j]
-            if isinstance(entry, mp.mpc):  # If it's an mpc object from mpmath
-                A[i, j] = complex(entry.real, entry.imag)  # Convert to Python complex
-            else:
-                A[i, j] = entry  # Assume already numeric
+    # Define a vectorized function to convert entries
+    def convert_entry(entry):
+        if isinstance(entry, mp.mpc):
+            return complex(entry.real, entry.imag)
+        elif isinstance(entry, mp.mpf):
+            return float(entry)
+        else:
+            return entry  # Assume already numeric
+
+    # Vectorize the function
+    vectorized_convert = np.vectorize(convert_entry)
+
+    # Apply the vectorized conversion
+    A = vectorized_convert(A)
+
+    # Ensure the matrix is of type complex (if necessary)
+    A = A.astype(np.complex128)
 
     return A

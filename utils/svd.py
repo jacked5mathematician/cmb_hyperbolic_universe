@@ -10,18 +10,26 @@ from utils.sys_generation import construct_numeric_matrix
 def solve_system_via_svd_numeric(A):
     start_time = time.time()  # Start timing
 
-    # Use full_matrices=False to avoid computing unnecessary large U and Vt
+    # Perform Singular Value Decomposition
     U, s, Vt = svd(A, full_matrices=False)
-    a = Vt[-1]  # The singular vector corresponding to the smallest singular value
 
-    # Calculate chi^2 = |A * a|^2 efficiently using norm
-    chi_squared = np.linalg.norm(A @ a) ** 2
+    # Find the index of the smallest singular value
+    smallest_singular_value_index = np.argmin(s)  # This gives the index of the smallest singular value
 
+    # Get the corresponding singular vector from Vt
+    best_a = Vt[smallest_singular_value_index]  # Get the singular vector corresponding to the smallest singular value
+
+    # Normalize the singular vector
+    best_a_normalized = best_a / np.linalg.norm(best_a)
+
+    # Calculate chi^2 = ||A * a||^2 using the selected singular vector
+    chi_squared = np.linalg.norm(A @ best_a_normalized) ** 2
+    
     end_time = time.time()  # End timing
     elapsed_time = end_time - start_time
-    #print(f"SVD computation completed in {elapsed_time:.4f} seconds.")  # Report timing
+    # print(f"SVD computation completed in {elapsed_time:.4f} seconds.")  # Report timing
 
-    return chi_squared, a
+    return chi_squared, best_a_normalized
 
 import matplotlib.pyplot as plt
 from matplotlib import rc
