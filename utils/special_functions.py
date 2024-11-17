@@ -6,11 +6,22 @@ from scipy.special import lpmv
 from joblib import Parallel, delayed
 from tqdm import tqdm
 
-epsilon = 1e-12  # Small number to avoid division by zero
-mp.dps = 7  # Set decimal precision for mpmath
-
 # Cache for storing normalization constants
 normalization_constant_cache = {}
+
+epsilon = 1e-35  # Small number to avoid division by zero
+mp.dps = 50  # Set decimal precision for mpmath
+normalization_constant_cache = {}
+
+# The Legendre function P^{-1/2-l}_{-1/2+i*nu}(cosh(chi))
+def legendre_P(alpha, beta, x):
+        #if x < 1 + epsilon:
+        #    x = 1 + epsilon
+
+        prefactor = ((x + 1) / (x - 1))**(beta / 2)
+        hyp_part = mp.hyp2f1(alpha + 1, -alpha, 1 - beta, (1 - x) / 2, maxprec=100000, maxterms=10000000)
+        res = prefactor * hyp_part / mp.gamma(1 - beta)
+        return mp.legenp(alpha,beta,x)
 
 # Radial function using Phi^nu_l (Hyperspherical Bessel function for K=-1)
 def Phi_nu_l(nu, l, chi):
@@ -18,29 +29,21 @@ def Phi_nu_l(nu, l, chi):
     nu = float(nu)
     chi = float(chi)
     l = int(l)
-    
+
     # Compute N^nu_l as a product from n=1 to l of (nu^2 + n^2)
     N_nu_l = np.prod([nu**2 + n**2 for n in range(1, l + 1)])
-    
-    # The Legendre function P^{-1/2-l}_{-1/2+i*nu}(cosh(chi)) using hyp2f1
-    def legendre_P(alpha, beta, x):
-        if x < 1 + epsilon:
-            x = 1 + epsilon
-        
-        prefactor = ((x + 1) / (x - 1))**(beta / 2)
-        hyp_part = mp.hyp2f1(alpha + 1, -alpha, 1 - beta, (1 - x) / 2)
-        return prefactor * hyp_part / mp.gamma(1 - beta)
-    
+
     alpha = -0.5 + 1j * nu
     beta = -0.5 - l
     x = np.cosh(chi)
-    
+
+    #legendre_value = mp.re(legendre_P(alpha, beta, x))
     legendre_value = mp.re(legendre_P(alpha, beta, x))
+
     
-    # Compute the unnormalized Phi_nu_l
     Phi_unnormalized = np.sqrt(np.pi * N_nu_l / (2 * np.sinh(chi))) * legendre_value
-    
-    # Normalize Phi_nu_l
+
+    # not needed code
     key = (nu, l)
     if key in normalization_constant_cache:
         norm_const = normalization_constant_cache[key]
@@ -50,15 +53,15 @@ def Phi_nu_l(nu, l, chi):
             chi = float(chi)
             Phi_val = Phi_nu_l_no_norm(nu, l, chi)
             return np.abs(Phi_val)**2 * (np.sinh(chi))**2
-        
+
         # Integrate over chi from 0 to chi_max
-        chi_max = 50  # Adjust chi_max as needed
-        integral = mp.quad(integrand, [epsilon, chi_max], maxdegree=10)
-        norm_const = np.sqrt(integral)
-        normalization_constant_cache[key] = norm_const
-    
-    Phi_normalized = mp.re(Phi_unnormalized / norm_const)
-    return Phi_normalized
+        #chi_max = 50 
+        #integral = mp.quad(integrand, [epsilon, chi_max], maxdegree=10)
+        #norm_const = np.sqrt(integral)
+        #normalization_constant_cache[key] = norm_const
+
+    #Phi_normalized = mp.re(Phi_unnormalized / norm_const)
+    return Phi_unnormalized
 
 def Phi_nu_l_no_norm(nu, l, chi):
     """Compute the unnormalized hyperspherical Bessel function Phi^nu_l(chi)."""
@@ -71,8 +74,8 @@ def Phi_nu_l_no_norm(nu, l, chi):
     
     # The Legendre function P^{-1/2-l}_{-1/2+i*nu}(cosh(chi))
     def legendre_P(alpha, beta, x):
-        if x < 1 + epsilon:
-            x = 1 + epsilon
+        #if x < 1 + epsilon:
+         #   x = 1 + epsilon
         
         prefactor = ((x + 1) / (x - 1))**(beta / 2)
         hyp_part = mp.hyp2f1(alpha + 1, -alpha, 1 - beta, (1 - x) / 2)
