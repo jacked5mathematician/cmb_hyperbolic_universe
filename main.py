@@ -53,7 +53,16 @@ def profile_function(func, *args, **kwargs):
 
     return result
 
-def process_k_values_chunk(chunk_index, k_values_chunk, inside_points, pairing_matrices, min_images, tolerance, manifold_name):
+def process_k_values_chunk(
+    chunk_index, 
+    k_values_chunk, 
+    inside_points, 
+    pairing_matrices, 
+    min_images, 
+    tolerance, 
+    manifold_name, 
+    num_best_to_compute=5  # Number of best chi-squared values to compute
+):
     # Set up logging
     output_dir = 'output_values'
     os.makedirs(output_dir, exist_ok=True)
@@ -67,7 +76,11 @@ def process_k_values_chunk(chunk_index, k_values_chunk, inside_points, pairing_m
     handler.setFormatter(formatter)
     logger.addHandler(handler)
     
-    chi_squared_values_chunk = []
+    # Set up directory for matrices
+    matrices_dir = 'output_matrices'
+    os.makedirs(matrices_dir, exist_ok=True)
+    
+    chi_squared_values_chunk = [[] for _ in range(num_best_to_compute)]
     k_values_processed = []
 
     # Initialize variables per chunk
@@ -137,41 +150,45 @@ def process_k_values_chunk(chunk_index, k_values_chunk, inside_points, pairing_m
         A = construct_numeric_matrix(matrix_system, k_value)
         timings['construct_numeric_matrix'] = time.time() - construct_matrix_start_time
 
+        # Save the matrix A
+        matrix_filename = os.path.join(matrices_dir, f'matrix_chunk_{chunk_index}_k_{k_value:.3f}.npz')
+        np.savez_compressed(matrix_filename, A=A)
+        logger.info(f"Matrix A saved to {matrix_filename}")
+
         # Solve system via SVD
         solve_system_start_time = time.time()
-        (chi_squared_best, chi_squared_second_best, chi_squared_third_best), _ = solve_system_via_svd_numeric(A)
+        chi_squared_values, _ = solve_system_via_svd_numeric(A)
         timings['solve_system_via_svd_numeric'] = time.time() - solve_system_start_time
+
+        # Store the top chi-squared values up to `num_best_to_compute`
+        for i in range(min(len(chi_squared_values), num_best_to_compute)):
+            chi_squared_values_chunk[i].append(chi_squared_values[i])
 
         timings['total_time'] = time.time() - k_start_time
 
         # Log timings and chi-squared values
-        logger.info(f"k = {k_value}: chi_squared_best = {chi_squared_best}, "
-                        f"chi_squared_second_best = {chi_squared_second_best}, "
-                        f"chi_squared_third_best = {chi_squared_third_best}, timings = {timings}")
+        logger.info(f"k = {k_value}: chi_squared_values = {chi_squared_values[:num_best_to_compute]}, timings = {timings}")
 
         k_values_processed.append(k_value)
-        chi_squared_values_chunk.append((chi_squared_best, chi_squared_second_best, chi_squared_third_best))
     
     # Remove handler after processing
     logger.removeHandler(handler)
     handler.close()
 
     # Save results to a file
-        # Save the processed k_values and chi_squared data to output file
     output_file = os.path.join(output_dir, f"results_chunk_{chunk_index}.npz")
-    # Unpack chi_squared values into separate lists for saving
-    chi_squared_best, chi_squared_second_best, chi_squared_third_best = zip(*chi_squared_values_chunk)
 
+    # Prepare chi-squared data for saving
+    chi_squared_data = {f'chi_squared_rank_{i+1}': np.array(chi_squared_values_chunk[i]) for i in range(num_best_to_compute)}
+
+    # Save k_values and chi-squared data
     np.savez(
         output_file,
         k_values=k_values_processed,
-        chi_squared_best=chi_squared_best,
-        chi_squared_second_best=chi_squared_second_best,
-        chi_squared_third_best=chi_squared_third_best
+        **chi_squared_data
     )
 
-    logger.removeHandler(handler)
-    handler.close()
+    logger.info(f"Results saved to {output_file}")
 
 def main():
     # Get environment variables
@@ -211,16 +228,25 @@ def main():
 
     # Build Dirichlet domain
     domain_data = build_dirichlet_domain(manifold_name)
-    if domain_data is None:
-        print("Failed to build Dirichlet domain.")
-        return
+    #if domain_data is None:
+        #print("Failed to build Dirichlet domain.")
+        #return
     vertices, faces, pairing_matrices = domain_data
 
     # Generate random points
-    points = generate_random_points_in_domain(vertices, num_points)
+    #points = generate_random_points_in_domain(vertices, num_points)
+    output_dir = 'output_values'
+    inside_points_file = os.path.join(output_dir, 'inside_points.npy')
 
     # Filter points inside the domain
-    inside_points = filter_points_in_domain(points, faces, vertices)
+    # Check if inside_points file exists
+    if os.path.exists(inside_points_file):
+        print("Loading inside_points from file...")
+        inside_points = np.load(inside_points_file)
+        print(f"Loaded {len(inside_points)} points from inside_points file.")
+    else:
+        print("Error: inside_points file not found. Please run the debug file to generate inside_points.npy.")
+        return
     print(f"Number of points found inside the domain: {len(inside_points)}")
 
     # Process the assigned chunks in parallel
