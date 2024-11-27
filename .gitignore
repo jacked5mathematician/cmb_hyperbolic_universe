@@ -1,7 +1,8 @@
 # Ignore the virtual environment folder
 # Ignore virtual environment
-.venv/
-
+myenv/
+output_matrices/
+output_matrices_2/
 # General Python ignores
 *.pyc
 __pycache__/
@@ -11,5 +12,10 @@ __pycache__/
 
 
 output_values/
+output_values_2/
 outputs/
+output_plots/
 
+debugs/
+
+point_data/

@@ -42,34 +42,81 @@ def klein_to_pseudo_spherical(points):
     return np.array(pseudo_spherical_points, dtype=float)
 
 
-# Generate transformed points by applying the group generators
-def generate_transformed_points(inside_points, pairing_matrices):
-    classified_points = {i: [] for i in range(len(inside_points))}
-    inside_points = np.array(inside_points)
-    
-    for i, point in enumerate(inside_points):
-        hyperboloid_points = np.array([apply_so31_action(matrix, point) for matrix in pairing_matrices])
-        klein_points = project_to_klein(hyperboloid_points)
-        pseudo_spherical_points = klein_to_pseudo_spherical(klein_points)
-        
-        for pseudo_spherical_point in pseudo_spherical_points:
-            classified_points[i].append(pseudo_spherical_point)
-    
-    return classified_points
-
-def convert_to_points_images(classified_transformed_points):
+def convert_to_points_images(selected_transformed_points):
     """
-    Converts the dictionary structure of classified_transformed_points to a list of lists of tuples.
-    Each tuple represents a point in (rho, theta, phi) coordinates.
+    Combines selected_transformed_points such that each entry contains only the images.
+
+    Parameters:
+    - selected_transformed_points: Dictionary where keys are point indices and values are lists of images.
+
+    Returns:
+    - points_images: List of images for each original point index.
     """
     points_images = []
-    
-    for key, images in classified_transformed_points.items():
-        point_list = []
-        for image in images:
-            # Convert array to tuple
-            point_tuple = tuple(image)  # Assumes image is a numpy array like [rho, theta, phi]
-            point_list.append(point_tuple)
-        points_images.append(point_list)
-    
+    for idx, images_list in selected_transformed_points.items():
+        # Ensure the value is correctly formatted
+        if not isinstance(images_list, list):
+            print(f"Warning: Expected list for point {idx}, got {type(images_list)}")
+            images_list = []
+
+        # Extract points if 'point' key exists
+        images = [img['point'] for img in images_list if 'point' in img]
+        points_images.append(images)
+
     return points_images
+
+def poincare_to_pseudo_spherical(points):
+    """
+    Transform a list of 3D Poincaré ball coordinates into pseudo-spherical coordinates.
+    
+    Parameters:
+        points (list or np.ndarray): List or array of points in the Poincar�� ball model,
+                                     where each point is [x, y, z].
+    
+    Returns:
+        np.ndarray: Array of points in pseudo-spherical coordinates [rho, theta, phi].
+    """
+    points = np.array(points)
+    norm_squared = np.sum(points**2, axis=1)
+    valid_indices = norm_squared < 1
+    valid_points = points[valid_indices]
+    norm_squared = norm_squared[valid_indices]
+
+    X0 = (1 + norm_squared) / (1 - norm_squared)
+    X = 2 * valid_points / (1 - norm_squared[:, np.newaxis])
+    rho = np.arccosh(X0)
+    sinh_rho = np.sinh(rho)
+    theta = np.arccos(X[:, 2] / sinh_rho)
+    phi = np.arctan2(X[:, 1], X[:, 0])
+
+    pseudo_spherical_points = np.column_stack((rho, theta, phi))
+    return pseudo_spherical_points
+
+def poincare_distance(point1, point2):
+    """
+    Compute the hyperbolic distance between two points in the Poincaré ball model.
+    
+    Parameters:
+        point1 (list/tuple): Coordinates [x1, y1, z1] of the first point in the Poincaré ball.
+        point2 (list/tuple): Coordinates [x2, y2, z2] of the second point in the Poincaré ball.
+    
+    Returns:
+        float: The hyperbolic distance between the two points.
+    """
+    # Compute Euclidean norms of the points
+    norm1_squared = sum(coord**2 for coord in point1)
+    norm2_squared = sum(coord**2 for coord in point2)
+    
+    if norm1_squared >= 1 or norm2_squared >= 1:
+        raise ValueError("One or both points are outside the Poincaré ball (norm >= 1).")
+    
+    # Compute Euclidean distance between the points
+    euclidean_distance = np.sqrt(sum((p1 - p2)**2 for p1, p2 in zip(point1, point2)))
+    
+    # Compute hyperbolic distance using the Poincaré metric
+    numerator = 2 * euclidean_distance
+    denominator = (1 - norm1_squared) * (1 - norm2_squared)
+    cosh_dist = 1 + numerator / denominator
+    hyperbolic_distance = np.arccosh(cosh_dist)
+    
+    return hyperbolic_distance

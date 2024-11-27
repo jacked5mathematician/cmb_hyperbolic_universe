@@ -1,6 +1,6 @@
 from joblib import Parallel, delayed
 import numpy as np
-from utils.special_functions import parallel_Q_k_lm_compute
+from utils.special_functions import parallel_Q_k_lm_compute, Q_k_lm_vectorized
 import mpmath as mp
 
 def compute_column(l, m, k_value, points_images, q_values):
@@ -30,49 +30,44 @@ def compute_column(l, m, k_value, points_images, q_values):
 
     return column
 
-def generate_matrix_system(points_images, L, k_value, valid_points):
+def generate_matrix_system(points_images, L, k_value):
+    """
+    Generate the matrix system using the provided points and their images.
+
+    Parameters:
+    - points_images: List of tuples where each tuple contains (original_point, [image_points])
+    - L: Max angular momentum
+    - k_value: Current k value
+
+    Returns:
+    - M: Number of rows in the matrix
+    - N: Number of columns in the matrix
+    - A: The constructed matrix as a numpy array
+    """
     k_value = float(k_value)
-
     lm_pairs = [(l, m) for l in range(L + 1) for m in range(-l, l + 1)]
+    N = len(lm_pairs)  # Number of columns
+    A_rows = []
 
-    # Use the parallelized Q_k_lm computation
-    q_values = parallel_Q_k_lm_compute(lm_pairs, k_value, points_images)
+    for original_point, images in points_images:
+        n_j = len(images)
+        
+        if n_j < 2:
+            continue
 
-    # Determine the number of jobs based on your system's capabilities
-    n_jobs = 1  # Use all available cores
+        images_array = np.array(images)
+        alpha_indices, beta_indices = np.triu_indices(n_j, k=1)
 
-    # Parallel processing over (l, m) pairs
-    columns = Parallel(n_jobs=n_jobs)(
-        delayed(compute_column)(l, m, k_value, points_images, q_values)
-        for l, m in lm_pairs
-    )
+        Q_values = Q_k_lm_vectorized(k_value, lm_pairs, images_array)
+        Q_alpha = Q_values[alpha_indices]
+        Q_beta = Q_values[beta_indices]
+        differences = Q_alpha - Q_beta
 
-    # Transpose the result to get columns as needed
-    matrix_system = list(map(list, zip(*columns)))
+        A_rows.extend(differences)
 
-    N_calculated = (L + 1) ** 2  # Number of columns
-    return len(matrix_system), N_calculated, matrix_system
+    A = np.array(A_rows, dtype=np.complex128)
+    M = len(A)
+    return M, N, A
 
-def construct_numeric_matrix(matrix_system, k_value):
-    # Convert the matrix_system to a numpy array
-    A = np.array(matrix_system)
-
-    # Define a vectorized function to convert entries
-    def convert_entry(entry):
-        if isinstance(entry, mp.mpc):
-            return complex(entry.real, entry.imag)
-        elif isinstance(entry, mp.mpf):
-            return float(entry)
-        else:
-            return entry  # Assume already numeric
-
-    # Vectorize the function
-    vectorized_convert = np.vectorize(convert_entry)
-
-    # Apply the vectorized conversion
-    A = vectorized_convert(A)
-
-    # Ensure the matrix is of type complex (if necessary)
-    A = A.astype(np.complex128)
-
-    return A
+def construct_numeric_matrix():
+    return None

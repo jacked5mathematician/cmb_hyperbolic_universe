@@ -1,3 +1,6 @@
+import matplotlib
+matplotlib.use('Agg')
+
 import matplotlib.pyplot as plt
 from scipy.linalg import svd
 from joblib import Parallel, delayed
@@ -13,20 +16,27 @@ def solve_system_via_svd_numeric(A):
     # Perform Singular Value Decomposition
     U, s, Vt = svd(A, full_matrices=False)
 
-    # Get indices of the smallest singular values
-    sorted_indices = np.argsort(s)  # Sort indices based on singular values in ascending order
+    # Iterate through all singular vectors (rows of Vt)
+    chi_squared_values = []
+    vectors = []
 
-    # Get the corresponding singular vectors from Vt and normalize them
-    singular_vectors = [Vt[idx] / np.linalg.norm(Vt[idx]) for idx in sorted_indices[:3]]
+    for vec in Vt:
+        chi_squared = np.linalg.norm(A @ vec) ** 2  # Compute chi^2
+        chi_squared_values.append(chi_squared)
+        vectors.append(vec)
 
-    # Calculate chi^2 for each solution
-    chi_squared_values = [np.linalg.norm(A @ vec) ** 2 for vec in singular_vectors]
+    # Find the indices of the 3 smallest chi^2 values
+    sorted_indices = np.argsort(chi_squared_values)[:3]
+
+    # Extract the top 3 chi^2 values and corresponding vectors
+    top_chi_squared_values = [chi_squared_values[idx] for idx in sorted_indices]
+    top_vectors = [vectors[idx] for idx in sorted_indices]
 
     end_time = time.time()  # End timing
     elapsed_time = end_time - start_time
-    print(f"SVD computation completed in {elapsed_time:.4f} seconds.")
+    #print(f"SVD computation completed in {elapsed_time:.4f} seconds.")
 
-    return chi_squared_values, singular_vectors
+    return top_chi_squared_values, top_vectors
 
 import matplotlib.pyplot as plt
 from datetime import datetime
@@ -34,11 +44,11 @@ import os
 
 def plot_chi_squared_spectrum(
     k_values,
-    chi_squared_values,
+    chi_squared_values_list,
     manifold_name,
     resolution,
     output_dir='output_plots',
-    num_best_to_show=1,
+    num_best_to_show=3,
     dpi=600  # Set a high DPI for detailed images
 ):
     """
@@ -51,8 +61,8 @@ def plot_chi_squared_spectrum(
 
     # Plot the chi-squared spectra for the requested number of best values
     for i in range(num_best_to_show):
-        if i < len(chi_squared_values):
-            plt.plot(k_values, chi_squared_values[i], label=f'Best χ²(k), Rank {i+1}', linestyle='-', linewidth=1.5)
+        if i < len(chi_squared_values_list):
+            plt.plot(k_values, chi_squared_values_list[i], label=f'Best χ²(k), Rank {i+1}', linestyle='-', linewidth=1.5)
 
     # Labels and title
     plt.xlabel('k', fontsize=14)

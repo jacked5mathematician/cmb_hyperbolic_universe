@@ -160,3 +160,76 @@ def parallel_Q_k_lm_compute(lm_pairs, k_value, points_images):
     q_values_dict = parallel_Phi_Y_lm(lm_pairs, k_value, all_images)
 
     return q_values_dict
+
+import numpy as np
+from scipy.special import sph_harm
+from mpmath import fp
+
+def Phi_nu_l_vectorized(nu, l, rho_array):
+    """Vectorized computation of Phi_nu_l for an array of rho values."""
+    # Compute N_nu_l as product over n from 1 to l of (nu^2 + n^2)
+    N_nu_l = np.prod([nu**2 + n**2 for n in range(1, l + 1)])
+    # Ensure rho_array is a NumPy array
+    rho_array = np.array(rho_array, dtype=np.float64)
+    # Compute sinh(rho) safely
+    sinh_rho = np.sinh(rho_array)
+    # Avoid division by zero
+    sinh_rho[sinh_rho == 0] = np.finfo(float).eps
+    # Compute the prefactor
+    prefactor = np.sqrt(np.pi * N_nu_l / (sinh_rho))
+    # Compute x = cosh(rho)
+    x = np.cosh(rho_array)
+    # Compute Legendre function using mpmath for high-precision
+    alpha = -0.5 + 1j * nu
+    beta = -0.5 - l
+    # Vectorize the computation of Legendre function
+    legenp_vec = np.vectorize(lambda xi: mp.legenp(alpha, beta, xi))
+    legendre_values = legenp_vec(x)
+    # Convert to numpy array of complex numbers
+    legendre_values = np.array([complex(lv) for lv in legendre_values], dtype=np.complex128)
+    # Compute Phi_nu_l
+    Phi_nu_l_values = prefactor * legendre_values
+    return Phi_nu_l_values
+
+def Y_lm_real_vectorized(l, m, theta_array, phi_array):
+    """Vectorized computation of real spherical harmonics."""
+    # Ensure theta_array and phi_array are NumPy arrays
+    theta_array = np.array(theta_array)
+    phi_array = np.array(phi_array)
+    # Compute normalization constant
+    norm_const = normalization_constant(l, m)
+    # Compute associated Legendre polynomials
+    legendre_vals = lpmv(abs(m), l, np.cos(theta_array))
+    # Handle the sign of m
+    if m > 0:
+        Y_lm = np.sqrt(2) * norm_const * np.cos(m * phi_array) * legendre_vals
+    elif m < 0:
+        Y_lm = np.sqrt(2) * norm_const * np.sin(-m * phi_array) * legendre_vals
+    else:
+        Y_lm = norm_const * legendre_vals
+    return Y_lm
+
+def normalization_constant(l, m):
+    """Compute normalization constant for spherical harmonics."""
+    l = int(l)
+    m = int(m)
+    return np.sqrt((2 * l + 1) / (4 * np.pi) * mp.factorial(l - abs(m)) / mp.factorial(l + abs(m)))
+
+def Q_k_lm_vectorized(k_value, lm_pairs, images_array):
+    # Extract rho, theta, phi from images_array
+    rho = images_array[:, 0]
+    theta = images_array[:, 1]
+    phi = images_array[:, 2]
+    num_images = len(rho)
+
+    Q_values = np.zeros((num_images, len(lm_pairs)), dtype=np.complex128)
+
+    for idx, (l, m) in enumerate(lm_pairs):
+        # Compute Phi_nu_l for all rho
+        Phi_vals = Phi_nu_l_vectorized(k_value, l, rho)
+        # Compute Y_lm_real for all theta and phi
+        Y_vals = Y_lm_real_vectorized(l, m, theta, phi)
+        # Multiply radial and angular parts
+        Q_values[:, idx] = Phi_vals * Y_vals
+
+    return Q_values

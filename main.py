@@ -1,18 +1,19 @@
 import numpy as np
+import pickle  # Import pickle to load .pkl files
 from mpi4py import MPI
 from utils import (
     build_dirichlet_domain,
     generate_random_points_in_domain,
     filter_points_in_domain,
-    generate_transformed_points,
+    # generate_transformed_points,  # Remove this import
     convert_to_points_images,
     solve_system_via_svd_numeric,
     plot_chi_squared_spectrum,
     compute_target_M,
     filter_points_for_overconstraint,
     determine_tiling_radius,
-    generate_matrix_system,
     construct_numeric_matrix,
+    poincare_to_pseudo_spherical,  # Import the transformation function
 )
 from tqdm import tqdm  # Import for progress bars
 from joblib import Parallel, delayed
@@ -24,6 +25,7 @@ import logging
 import os
 import sys
 import json
+from utils.sys_generation import generate_matrix_system
 
 # Profiler function to wrap any function you want to profile
 def profile_function(func, *args, **kwargs):
@@ -56,12 +58,11 @@ def profile_function(func, *args, **kwargs):
 def process_k_values_chunk(
     chunk_index, 
     k_values_chunk, 
-    inside_points, 
-    pairing_matrices, 
+    data_with_distances,  # Adjusted to receive data_with_distances
     min_images, 
     tolerance, 
-    manifold_name, 
-    num_best_to_compute=5  # Number of best chi-squared values to compute
+    manifold_name,   
+    num_best_to_compute=5
 ):
     # Set up logging
     output_dir = 'output_values'
@@ -88,6 +89,7 @@ def process_k_values_chunk(
     classified_transformed_points = None
     selected_points = None
     selected_transformed_points = None
+    points_images = None
 
     # Process each k_value sequentially
     for k_value in k_values_chunk:
@@ -105,7 +107,7 @@ def process_k_values_chunk(
             # Compute tiling radius
             tiling_start_time = time.time()
             result = determine_tiling_radius(
-                inside_points, pairing_matrices, new_L_value, new_c_value, min_images, tolerance
+                data_with_distances, new_L_value, new_c_value, min_images, tolerance
             )
             timings['determine_tiling_radius'] = time.time() - tiling_start_time
 
@@ -122,15 +124,10 @@ def process_k_values_chunk(
 
             # Filter points
             filter_points_start_time = time.time()
-            selected_points, selected_transformed_points = filter_points_for_overconstraint(
-                classified_transformed_points, inside_points, M_desired
+            selected_points, selected_transformed_points, points_images = filter_points_for_overconstraint(
+                classified_transformed_points, data_with_distances, M_desired
             )
             timings['filter_points_for_overconstraint'] = time.time() - filter_points_start_time
-
-            # Convert points
-            convert_points_start_time = time.time()
-            points_images = convert_to_points_images(selected_transformed_points)
-            timings['convert_to_points_images'] = time.time() - convert_points_start_time
 
             previous_c_value = new_c_value
 
@@ -138,27 +135,26 @@ def process_k_values_chunk(
 
         # Generate matrix system
         matrix_system_start_time = time.time()
-        _, _, matrix_system = generate_matrix_system(points_images, new_L_value, k_value, valid_points)
+        _, _, A = generate_matrix_system(points_images, new_L_value, k_value)
         timings['generate_matrix_system'] = time.time() - matrix_system_start_time
 
-        if len(matrix_system) == 0 or len(matrix_system[0]) == 0:
-            logger.error(f"Error: matrix_system is empty for k = {k_value}")
+        if A.size == 0:
+            logger.error(f"Error: matrix A is empty for k = {k_value}")
             continue
 
-        # Construct numeric matrix
-        construct_matrix_start_time = time.time()
-        A = construct_numeric_matrix(matrix_system, k_value)
-        timings['construct_numeric_matrix'] = time.time() - construct_matrix_start_time
-
-        # Save the matrix A
-        matrix_filename = os.path.join(matrices_dir, f'matrix_chunk_{chunk_index}_k_{k_value:.3f}.npz')
-        np.savez_compressed(matrix_filename, A=A)
+        # Print matrix shape and save
+        logger.info(f"Generated matrix A with shape: {A.shape}")
+        matrix_filename = os.path.join(matrices_dir, f'matrix_chunk_{chunk_index}_k_{k_value:.3f}.npy')
+        np.save(matrix_filename, A)
         logger.info(f"Matrix A saved to {matrix_filename}")
 
-        # Solve system via SVD
-        solve_system_start_time = time.time()
-        chi_squared_values, _ = solve_system_via_svd_numeric(A)
-        timings['solve_system_via_svd_numeric'] = time.time() - solve_system_start_time
+        # Compute SVD and chi-squared values
+        chi_squared_values, singular_vectors = solve_system_via_svd_numeric(A)
+
+        # Log the chi-squared values
+        logger.info("Computed chi-squared values:")
+        for idx, chi_squared in enumerate(chi_squared_values):
+            logger.info(f"Singular Vector {idx + 1}: chi² = {chi_squared}")
 
         # Store the top chi-squared values up to `num_best_to_compute`
         for i in range(min(len(chi_squared_values), num_best_to_compute)):
@@ -203,7 +199,6 @@ def main():
     os.environ["OPENBLAS_NUM_THREADS"] = os.environ.get("OPENBLAS_NUM_THREADS", "1")
 
     manifold_name = 'm188(-1,1)'  # Example manifold name
-    num_points = 10000            # Number of random points to generate
     min_images = 20               # Minimum number of images required per point
     tolerance = 0.1               # Allow small deviations in rho
     resolution = 400              # Resolution for the k values
@@ -226,40 +221,31 @@ def main():
             chunks_assigned.append(k_values_chunks[i])
             chunk_indices.append(i)
 
-    # Build Dirichlet domain
-    domain_data = build_dirichlet_domain(manifold_name)
-    #if domain_data is None:
-        #print("Failed to build Dirichlet domain.")
-        #return
-    vertices, faces, pairing_matrices = domain_data
+    # Load transformed points data from the .pkl file
+    transformed_data_file = f'{manifold_name}_points_data.pkl'  # Update file name
 
-    # Generate random points
-    #points = generate_random_points_in_domain(vertices, num_points)
-    output_dir = 'output_values'
-    inside_points_file = os.path.join(output_dir, 'inside_points.npy')
-
-    # Filter points inside the domain
-    # Check if inside_points file exists
-    if os.path.exists(inside_points_file):
-        print("Loading inside_points from file...")
-        inside_points = np.load(inside_points_file)
-        print(f"Loaded {len(inside_points)} points from inside_points file.")
+    if os.path.exists(transformed_data_file):
+        print(f"Loading transformed points data from {transformed_data_file}...")
+        with open(transformed_data_file, 'rb') as f:
+            data_with_distances = pickle.load(f)
+        print(f"Loaded transformed points data.")
     else:
-        print("Error: inside_points file not found. Please run the debug file to generate inside_points.npy.")
+        print(f"Error: {transformed_data_file} not found.")
         return
-    print(f"Number of points found inside the domain: {len(inside_points)}")
 
     # Process the assigned chunks in parallel
     results = Parallel(n_jobs=num_jobs)(
         delayed(process_k_values_chunk)(
-            chunk_index, k_values_chunk, inside_points, pairing_matrices,
-            min_images, tolerance, manifold_name
+            chunk_index, k_values_chunk, data_with_distances,
+            min_images, tolerance, manifold_name,
         ) for chunk_index, k_values_chunk in zip(chunk_indices, chunks_assigned)
     )
+
     config = {
-        "total_chunks": total_chunks, 
-        "resolution": resolution       
-    }
+    "total_chunks": total_chunks, 
+    "resolution": resolution,
+    "manifold_name": manifold_name
+    }   
 
     with open('output_values/config.json', 'w') as f:
         json.dump(config, f)
