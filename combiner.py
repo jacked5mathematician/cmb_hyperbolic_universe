@@ -5,6 +5,7 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 
 from utils import plot_chi_squared_spectrum, solve_system_via_svd_numeric
+from utils.svd import plot_chi_squared_spectrum  # Import the updated plot function
 
 def sanity_check_matrices(total_chunks, matrices_dir):
     """Sanity check to ensure all expected matrices exist and are valid."""
@@ -120,6 +121,10 @@ def combine_results(
             else:
                 print(f"Warning: {key} not found in {file_path}.")
 
+    if not all_k_values:
+        print("No k_values found in the results. Exiting.")
+        return
+
     # Sort the results by k_values
     sorted_indices = np.argsort(all_k_values)
     k_values_sorted = np.array(all_k_values)[sorted_indices]
@@ -144,6 +149,71 @@ def combine_results(
     )
     print(f"Combined results saved to {combined_file}")
 
+def extract_values_from_log(log_file):
+    k_values = []
+    chi_squared_values = [[] for _ in range(3)]  # Assuming we are interested in the top 3 chi-squared values
+
+    with open(log_file, 'r') as f:
+        for line in f:
+            if "k =" in line and "chi_squared =" in line:
+                try:
+                    parts = line.split(":")
+                    k_value = float(parts[1].split(",")[0].strip().split("=")[1])
+                    chi_squared_str = parts[2].split(",")[0].strip().split("=")[1].strip("[]")
+                    chi_squared_list = [float(x) for x in chi_squared_str.split(",")]
+                    k_values.append(k_value)
+                    for i, chi in enumerate(chi_squared_list):
+                        if i < 3:
+                            chi_squared_values[i].append(chi)
+                except (IndexError, ValueError) as e:
+                    print(f"Error parsing line: {line.strip()} - {e}")
+
+    return k_values, chi_squared_values
+
+def combine_log_results(output_dir='output_values_2', num_best_to_combine=3):
+    all_k_values = []
+    all_chi_squared = [[] for _ in range(num_best_to_combine)]
+
+    # Gather and load each .log file
+    for process_index in range(100):  # Assuming process indices range from 0 to 99
+        log_file = os.path.join(output_dir, f"process_{process_index}.log")
+        if not os.path.exists(log_file):
+            print(f"Warning: {log_file} does not exist.")
+            continue
+
+        k_values, chi_squared_values = extract_values_from_log(log_file)
+        all_k_values.extend(k_values)
+        for i in range(num_best_to_combine):
+            all_chi_squared[i].extend(chi_squared_values[i])
+
+    if not all_k_values:
+        print("No k_values found in the log files. Exiting.")
+        return
+
+    # Sort the results by k_values
+    sorted_indices = np.argsort(all_k_values)
+    k_values_sorted = np.array(all_k_values)[sorted_indices]
+    chi_squared_sorted = [np.array(chi)[sorted_indices] for chi in all_chi_squared]
+
+    # Save combined results
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    combined_file = os.path.join(output_dir, f"combined_results_from_logs_{timestamp}.npz")
+    np.savez(
+        combined_file,
+        k_values=k_values_sorted,
+        **{f'chi_squared_rank_{i+1}': chi_sorted for i, chi_sorted in enumerate(chi_squared_sorted)}
+    )
+
+    # Plot the chi-squared spectrum
+    plot_chi_squared_spectrum(
+        k_values_sorted,
+        chi_squared_sorted,
+        "combined_logs",
+        len(k_values_sorted),
+        num_best_to_show=num_best_to_combine
+    )
+    print(f"Combined results saved to {combined_file}")
+
 if __name__ == "__main__":
     # Read the configuration from the JSON file
     with open('output_values/config.json', 'r') as f:
@@ -151,10 +221,31 @@ if __name__ == "__main__":
 
     total_chunks = config["total_chunks"]
     resolution = config["resolution"]
-    
-    print("[Info] Starting sanity check for matrices.")
-    sanity_check_matrices(total_chunks=total_chunks, matrices_dir='output_matrices')
+    manifold_name = config.get("manifold_name", "unknown_manifold")
 
-    #recompute_svd_and_update_results(total_chunks=total_chunks)
+    # Ensure the output directories exist
+    if not os.path.exists('output_matrices'):
+        os.makedirs('output_matrices')
+    if not os.path.exists('output_values'):
+        os.makedirs('output_values')
+    if not os.path.exists('output_plots'):
+        os.makedirs('output_plots')
 
-    #combine_results(total_chunks=total_chunks, resolution=resolution)
+    # Call combine_results to process the data and plot chi-squared values
+    '''
+    combine_results(
+        total_chunks=total_chunks,
+        resolution=resolution,
+        output_dir='output_values',
+        manifold_name=manifold_name,
+        num_best_to_combine=3
+    )
+    '''
+    # Ensure the output directories exist
+    if not os.path.exists('output_values_2'):
+        os.makedirs('output_values_2')
+    if not os.path.exists('output_plots'):
+        os.makedirs('output_plots')
+
+    # Call combine_log_results to process the log files and plot chi-squared values
+    combine_log_results(output_dir='output_values_2', num_best_to_combine=3)
