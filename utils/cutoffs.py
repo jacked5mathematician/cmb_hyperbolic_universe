@@ -28,21 +28,32 @@ def _find_crossing(k: float, ell: int, threshold: float, rho_cap: float, step: f
 
 
 def compute_rho_cutoffs(k: float, L: int, l_min: int, threshold: float = 0.25,
-                        rho_cap: float = 120.0, step: float = 0.05) -> Tuple[float, float]:
+                        rho_cap: float = 120.0, step: float = 0.05) -> Tuple[float, float, bool]:
     """
     Compute rho cutoffs following the paper-faithful policy.
 
     Primary method scans for the first crossing of |X_k^ell(rho) * sinh(rho)| <= threshold
     for ell = l_min and ell = L. If no crossing is found up to rho_cap, an envelope-based
     heuristic fallback is used.
+
+    Returns
+    -------
+    rho_min : float
+        First crossing for ell=l_min (Eq. 2.9 style).
+    rho_max : float
+        First crossing for ell=L.
+    fallback_used : bool
+        True if the envelope-based heuristic was applied.
     """
     if L < l_min:
         raise ValueError("L must be >= l_min")
 
     rho_min = _find_crossing(k, l_min, threshold, rho_cap, step)
     rho_max = _find_crossing(k, L, threshold, rho_cap, step)
+    fallback_used = False
 
     if rho_min is None or rho_max is None:
+        fallback_used = True
         rho_guess = float(np.arcsinh(1.0 / threshold))
         rho_env = max(rho_guess, rho_guess + ENVELOPE_L_SCALE * L)
         LOGGER.warning(
@@ -64,7 +75,7 @@ def compute_rho_cutoffs(k: float, L: int, l_min: int, threshold: float = 0.25,
             f"Got rho_min={rho_min}, rho_max={rho_max}."
         )
 
-    return float(rho_min), float(rho_max)
+    return float(rho_min), float(rho_max), fallback_used
 
 
 __all__ = ["compute_rho_cutoffs"]

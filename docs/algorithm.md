@@ -10,9 +10,9 @@ This repository follows the Cornish & Spergel “method of ghosts” conventions
 
 `compute_rho_cutoffs(k, L, l_min, threshold)` scans for the first rho where
 `|X_k^ell(rho) * sinh(rho)| <= threshold` for `ell = l_min` (rho_min) and `ell = L` (rho_max).
-If no crossing is found up to a safety cap, it falls back to an envelope heuristic
-`rho_guess = asinh(1/threshold)` with a larger guard `rho_max`, logging a warning.
-The function always guarantees `0 <= rho_min < rho_max` or raises a clear error.
+If no crossing is found up to a safety cap, it logs a warning, marks `fallback_used=True`, and falls
+back to an envelope heuristic. The function always guarantees `0 <= rho_min < rho_max` or raises a
+clear error.
 
 ### Ghost enumeration
 
@@ -23,9 +23,10 @@ enumerator produces images in the requested rho band so tests and diagnostics st
 
 ### Points inside the Dirichlet domain
 
-`sample_points_in_dirichlet_domain` uses SnapPy’s Dirichlet domain when possible. Otherwise it
-falls back to rejection sampling inside the Poincaré ball. The function returns both Poincaré
-coordinates and their pseudospherical transforms for diagnostics.
+`sample_points_in_dirichlet_domain` applies the Dirichlet-domain inequality
+`d(x, p0) <= d(x, gamma(p0))` for a finite set of group elements (words up to a small depth).
+If generators are unavailable it falls back to rejection sampling inside the Poincaré ball. The
+function returns both Poincaré coordinates and their pseudospherical transforms for diagnostics.
 
 ### Matrix assembly and invariants
 

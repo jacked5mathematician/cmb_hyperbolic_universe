@@ -42,6 +42,20 @@ def klein_to_pseudo_spherical(points):
     return np.array(pseudo_spherical_points, dtype=float)
 
 
+def klein_to_poincare(points):
+    """
+    Convert Klein coordinates back to Poincaré ball coordinates.
+    """
+    pts = np.array(points, dtype=float)
+    if pts.ndim == 1:
+        pts = pts.reshape(1, -1)
+    norm_sq = np.sum(pts**2, axis=1)
+    # Guard against slight numerical overflow
+    norm_sq = np.clip(norm_sq, 0.0, 1.0 - 1e-12)
+    scale = 1.0 / (1.0 + np.sqrt(1.0 - norm_sq))
+    return pts * scale[:, None]
+
+
 def convert_to_points_images(selected_transformed_points):
     """
     Combines selected_transformed_points such that each entry contains only the images.
