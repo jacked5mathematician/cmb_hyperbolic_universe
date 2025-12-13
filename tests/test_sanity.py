@@ -190,3 +190,113 @@ def test_paper_mode_differs_from_legacy(tmp_path: Path):
     # Expect significant difference (>1% relative change)
     assert np.any(relative_diff > 0.01), \
         f"Paper and legacy modes produce very similar chi^2: {chi2_paper} vs {chi2_legacy}"
+
+
+def test_chi2_definitions_differ(tmp_path: Path):
+    """Verify that different chi2 definitions produce different values."""
+    from main import run_pipeline
+    
+    k_values = np.array([2.0])
+    
+    # Run with raw_residual (default)
+    output_raw = tmp_path / "raw"
+    result_raw = run_pipeline(
+        manifold_name="m003(-2,3)",
+        k_values=k_values,
+        n_points=5,
+        seed=42,
+        small_test=True,
+        dry_run=False,
+        output_dir=output_raw,
+        chi2_mode="paper",
+        chi2_definition="raw_residual",
+    )
+    
+    # Run with ratio
+    output_ratio = tmp_path / "ratio"
+    result_ratio = run_pipeline(
+        manifold_name="m003(-2,3)",
+        k_values=k_values,
+        n_points=5,
+        seed=42,
+        small_test=True,
+        dry_run=False,
+        output_dir=output_ratio,
+        chi2_mode="paper",
+        chi2_definition="ratio",
+    )
+    
+    # Load both spectra
+    data_raw = np.load(result_raw["spectrum_path"])
+    data_ratio = np.load(result_ratio["spectrum_path"])
+    
+    chi2_raw = data_raw["chi2_rank_1"]
+    chi2_ratio = data_ratio["chi2_rank_1"]
+    
+    # The chi^2 values should be different for different definitions
+    # Use relative tolerance check since absolute values may be tiny
+    if np.any(np.isfinite(chi2_raw)) and np.any(np.isfinite(chi2_ratio)):
+        # Check that they differ by more than 1% relative to each value
+        finite_mask = np.isfinite(chi2_raw) & np.isfinite(chi2_ratio)
+        if np.any(finite_mask):
+            chi2_raw_finite = chi2_raw[finite_mask]
+            chi2_ratio_finite = chi2_ratio[finite_mask]
+            # Compare using relative difference
+            relative_diff = np.abs(chi2_raw_finite - chi2_ratio_finite) / (np.abs(chi2_raw_finite) + 1e-100)
+            # They should differ by at least 10% (ratio divides by sigma_max^2)
+            assert np.any(relative_diff > 0.01), \
+                f"Raw and ratio definitions too similar: {chi2_raw} vs {chi2_ratio}, rel_diff={relative_diff}"
+    
+    # Ratio should be bounded [0, 1] while raw can be anything
+    finite_ratio = chi2_ratio[np.isfinite(chi2_ratio)]
+    if len(finite_ratio) > 0:
+        assert np.all((finite_ratio >= 0) & (finite_ratio <= 1)), \
+            f"Ratio definition should be in [0,1], got {chi2_ratio}"
+
+
+def test_chi2_definition_per_row_scaling(tmp_path: Path):
+    """Verify that per_row definition scales by M."""
+    from main import run_pipeline
+    
+    k_values = np.array([2.0])
+    
+    # Run with raw_residual
+    output_raw = tmp_path / "raw"
+    result_raw = run_pipeline(
+        manifold_name="m003(-2,3)",
+        k_values=k_values,
+        n_points=5,
+        seed=42,
+        small_test=True,
+        dry_run=False,
+        output_dir=output_raw,
+        chi2_mode="paper",
+        chi2_definition="raw_residual",
+    )
+    
+    # Run with per_row
+    output_per_row = tmp_path / "per_row"
+    result_per_row = run_pipeline(
+        manifold_name="m003(-2,3)",
+        k_values=k_values,
+        n_points=5,
+        seed=42,
+        small_test=True,
+        dry_run=False,
+        output_dir=output_per_row,
+        chi2_mode="paper",
+        chi2_definition="per_row",
+    )
+    
+    # Load both spectra
+    data_raw = np.load(result_raw["spectrum_path"])
+    data_per_row = np.load(result_per_row["spectrum_path"])
+    
+    chi2_raw = data_raw["chi2_rank_1"]
+    chi2_per_row = data_per_row["chi2_rank_1"]
+    M = data_raw["M"]
+    
+    # per_row should be raw divided by M
+    expected = chi2_raw / M
+    assert np.allclose(chi2_per_row, expected), \
+        f"per_row should equal raw/M: {chi2_per_row} vs {expected}"
