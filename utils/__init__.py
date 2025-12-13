@@ -1,18 +1,43 @@
-# This file is used to import all the functions from the different modules in the utils package
-try:
-    from .domain_building import convert_to_4x4_matrices, build_dirichlet_domain, generate_random_points_in_domain, filter_points_in_domain, select_points
-except Exception:  # pragma: no cover - optional dependency
-    convert_to_4x4_matrices = build_dirichlet_domain = generate_random_points_in_domain = filter_points_in_domain = select_points = None
-from .special_functions import Phi_nu_l, normalization_constant, Y_lm_real, Q_k_lm, parallel_Q_k_lm_compute, parallel_Phi_Y_lm, Phi_nu_l_cached, Y_lm_real_cached, Q_k_lm_cached, Q_k_lm_vectorized
-from .transformations import apply_so31_action, project_to_klein, klein_to_pseudo_spherical, convert_to_points_images, poincare_to_pseudo_spherical, poincare_distance, klein_to_poincare
-from .svd import solve_system_via_svd_numeric, plot_chi_squared_spectrum
-from .sys_generation import generate_matrix_system, construct_numeric_matrix
-try:
-    from .parameter_control import compute_target_M, filter_points_for_overconstraint, select_points_for_c, determine_tiling_radius
-except Exception:  # pragma: no cover - optional dependency
-    compute_target_M = filter_points_for_overconstraint = select_points_for_c = determine_tiling_radius = None
-from .conventions import k_to_nu, q_squared
+# This file exports the core pipeline functions from the utils package
+# For the current paper-faithful pipeline (main.py)
+
+# Core pipeline functions
 from .cutoffs import compute_rho_cutoffs
-from .ghosts import enumerate_ghost_images
-from .points import sample_points_in_dirichlet_domain
+from .ghosts import enumerate_ghost_images, get_group_elements
+from .points import sample_points_in_dirichlet_domain, DEFAULT_FALLBACK_RADIUS
+from .sys_generation import generate_matrix_system
+from .svd import solve_system_via_svd_numeric
 from .eigenvalues import extract_eigenvalues_from_spectrum
+
+# Transformations used by pipeline
+from .transformations import (
+    apply_so31_action,
+    klein_to_poincare,
+    poincare_distance,
+    project_to_klein,
+)
+
+# Special functions (internal use, but exported for completeness)
+from .special_functions import Q_k_lm, Q_k_lm_vectorized
+
+# Legacy/optional imports (for backward compatibility with old scripts in legacy/)
+try:
+    from .domain_building import (
+        convert_to_4x4_matrices,
+        build_dirichlet_domain,
+        generate_random_points_in_domain,
+        filter_points_in_domain,
+        select_points,
+    )
+except Exception:  # pragma: no cover - optional dependency
+    pass
+
+try:
+    from .parameter_control import (
+        compute_target_M,
+        filter_points_for_overconstraint,
+        select_points_for_c,
+        determine_tiling_radius,
+    )
+except Exception:  # pragma: no cover - optional dependency
+    pass
