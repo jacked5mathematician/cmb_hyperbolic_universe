@@ -40,10 +40,12 @@ def test_chi2_raw_residual():
     
     # Expected: squared smallest singular values
     # For this matrix, singular values are [3.0, 2.0, sqrt(1.25)] ≈ [3.0, 2.0, 1.118]
-    # Smallest is 1.118..., so chi^2 should be 1.118^2 ≈ 1.25
+    # where sqrt(1.25) comes from the norm of the last two rows: sqrt(1^2 + 0.5^2) = sqrt(1.25)
+    # Smallest is sqrt(1.25) ≈ 1.118, so chi^2 should be 1.25
+    EXPECTED_SIGMA_MIN = np.sqrt(1.25)
     assert len(chi2) == 3
     assert chi2[0] < chi2[1] < chi2[2]
-    assert np.allclose(chi2[0], 1.118**2, rtol=1e-2)
+    assert np.allclose(chi2[0], EXPECTED_SIGMA_MIN**2, rtol=1e-2)
 
 
 def test_chi2_per_row():
@@ -79,13 +81,14 @@ def test_chi2_ratio():
     
     chi2 = compute_chi2_ratio(A, s, Vt, n_smallest=3)
     
-    # Singular values in descending order are [4, 2, 1.118...]
+    # Singular values in descending order are [4, 2, sqrt(1.25)] ≈ [4, 2, 1.118]
     # sigma_max = 4.0
-    # Smallest values: 1.118..., 2.0, 4.0
-    # Ratios: (1.118/4)^2, (2/4)^2, (4/4)^2 = ~0.078, 0.25, 1.0
+    # Smallest values: sqrt(1.25), 2.0, 4.0
+    # Ratios: (sqrt(1.25)/4)^2, (2/4)^2, (4/4)^2 = 1.25/16, 0.25, 1.0
+    EXPECTED_SIGMA_MIN = np.sqrt(1.25)
     assert len(chi2) == 3
     assert chi2[0] < chi2[1] < chi2[2]
-    assert np.allclose(chi2[0], (1.118/4.0)**2, rtol=1e-2)
+    assert np.allclose(chi2[0], (EXPECTED_SIGMA_MIN/4.0)**2, rtol=1e-2)
     assert np.allclose(chi2[1], (2.0/4.0)**2, rtol=1e-5)
     assert np.allclose(chi2[2], (4.0/4.0)**2, rtol=1e-5)
 

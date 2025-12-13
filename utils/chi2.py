@@ -3,6 +3,10 @@ Chi-squared computation with multiple definition options.
 
 This module provides different chi-squared definitions to match various
 interpretations from the paper (eigenvalueprob.pdf).
+
+All chi2 computation functions share the same signature (A, singular_values, vectors, n_smallest)
+to work with the dispatcher function compute_chi2(). The `vectors` parameter is unused in most
+implementations but kept for API consistency and potential future extensions.
 """
 import numpy as np
 from typing import Tuple, Optional
