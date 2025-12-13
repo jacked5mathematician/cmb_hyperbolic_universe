@@ -107,17 +107,29 @@ def Y_lm_real(l, m, theta, phi):
 # Global cache dictionaries for Q functions
 phi_cache = {}
 y_lm_cache = {}
+# Quantization precision for cache keys to prevent unbounded growth
+RHO_CACHE_PRECISION = 1e-8
+ANGLE_CACHE_PRECISION = 1e-8
+
+def _quantize(value, precision):
+    """Round a value to the given precision for cache keys."""
+    return round(float(value) / precision) * precision
 
 def Phi_nu_l_cached(nu, l, chi):
-    """Cached version of the normalized hyperspherical Bessel function Phi^nu_l(chi) for K = -1."""
-    key = (nu, l, chi)
+    """Cached version of the normalized hyperspherical Bessel function Phi^nu_l(chi) for K = -1.
+    Uses quantized rho for bounded cache."""
+    chi_q = _quantize(chi, RHO_CACHE_PRECISION)
+    key = (float(nu), int(l), chi_q)
     if key not in phi_cache:
         phi_cache[key] = Phi_nu_l(nu, l, chi)
     return phi_cache[key]
 
 def Y_lm_real_cached(l, m, theta, phi):
-    """Cached version of the real-valued spherical harmonics function."""
-    key = (l, m, theta, phi)
+    """Cached version of the real-valued spherical harmonics function.
+    Uses quantized angles for bounded cache."""
+    theta_q = _quantize(theta, ANGLE_CACHE_PRECISION)
+    phi_q = _quantize(phi, ANGLE_CACHE_PRECISION)
+    key = (int(l), int(m), theta_q, phi_q)
     if key not in y_lm_cache:
         y_lm_cache[key] = Y_lm_real(l, m, theta, phi)
     return y_lm_cache[key]
