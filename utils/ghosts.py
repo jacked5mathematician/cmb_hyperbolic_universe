@@ -9,12 +9,13 @@ import numpy as np
 from .transformations import apply_so31_action, project_to_klein, klein_to_pseudo_spherical
 
 LOGGER = logging.getLogger(__name__)
+MATRIX_ROUND_DECIMALS = 8  # Precision used for deduplicating group elements
 
 
 def _load_generators(manifold_name: str) -> List[np.ndarray]:
     try:
         import snappy  # type: ignore
-    except Exception as exc:  # pragma: no cover - optional dependency
+    except ImportError as exc:  # pragma: no cover - optional dependency
         LOGGER.warning("SnapPy not available (%s); falling back to synthetic ghosts.", exc)
         return []
 
@@ -69,7 +70,7 @@ def enumerate_ghost_images(
             continue
 
         queue = deque([(np.eye(4), 0)])
-        seen = {tuple(np.round(np.eye(4).flatten(), 8))}
+        seen = {tuple(np.round(np.eye(4).flatten(), MATRIX_ROUND_DECIMALS))}
         images: List[Tuple[float, float, float]] = []
 
         while queue:
@@ -88,15 +89,15 @@ def enumerate_ghost_images(
 
             for gen in generators:
                 new_mat = mat @ gen
-                key = tuple(np.round(new_mat.flatten(), 8))
+                key = tuple(np.round(new_mat.flatten(), MATRIX_ROUND_DECIMALS))
                 if key in seen:
                     continue
                 seen.add(key)
                 queue.append((new_mat, depth + 1))
 
             if len(images) >= min_images and depth > 0:
-                # we have enough images and have expanded at least one level
-                continue
+                # We have enough images; stop expanding further
+                break
 
         if len(images) < min_images:
             LOGGER.warning(

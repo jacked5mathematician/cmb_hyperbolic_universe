@@ -40,7 +40,7 @@ def run_pipeline(manifold_name: str, k_values: np.ndarray, n_points: int, seed: 
     for k in k_values:
         L = _default_L(k)
         l_min = _default_l_min(L)
-        c_val = L  # placeholder consistent with paper heuristic
+        c_val = L  # TODO: replace with paper-specific c(k) heuristic once available
         rho_min, rho_max = compute_rho_cutoffs(k, L, l_min)
         LOGGER.info(
             "k=%.3f -> L=%s c=%s l_min=%s rho_min=%.3f rho_max=%.3f",

@@ -36,7 +36,8 @@ def generate_matrix_system(points_images, L, k_value):
 
 def construct_numeric_matrix(matrix_system, k_value=None):
     """
-    Legacy compatibility helper. If matrix_system is already numeric, return it.
+    Legacy compatibility helper. Converts list-like systems to numpy arrays and
+    returns pre-existing numeric arrays unchanged.
     """
     if isinstance(matrix_system, np.ndarray):
         return matrix_system

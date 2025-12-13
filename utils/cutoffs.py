@@ -5,10 +5,11 @@ from typing import Tuple
 
 import numpy as np
 
-from .special_functions import Phi_nu_l
+from .special_functions import Phi_nu_l_cached
 from .conventions import k_to_nu
 
 LOGGER = logging.getLogger(__name__)
+ENVELOPE_L_SCALE = 0.5  # Heuristic factor to widen fallback rho_max with increasing L
 
 
 def _find_crossing(k: float, ell: int, threshold: float, rho_cap: float, step: float) -> float | None:
@@ -16,7 +17,7 @@ def _find_crossing(k: float, ell: int, threshold: float, rho_cap: float, step: f
     prev_val = None
     rho = 0.0
     while rho <= rho_cap:
-        val = abs(Phi_nu_l(nu, ell, rho) * np.sinh(rho))
+        val = abs(Phi_nu_l_cached(nu, ell, rho) * np.sinh(rho))
         if prev_val is not None and prev_val > threshold >= val:
             return rho
         if val <= threshold:
@@ -43,7 +44,7 @@ def compute_rho_cutoffs(k: float, L: int, l_min: int, threshold: float = 0.25,
 
     if rho_min is None or rho_max is None:
         rho_guess = float(np.arcsinh(1.0 / threshold))
-        rho_env = max(rho_guess, rho_guess + L / 2.0)
+        rho_env = max(rho_guess, rho_guess + ENVELOPE_L_SCALE * L)
         LOGGER.warning(
             "Falling back to envelope heuristic for rho cutoffs (k=%s, L=%s, l_min=%s): "
             "rho_guess=%s -> rho_env=%s",

@@ -113,7 +113,7 @@ def poincare_distance(point1, point2):
     diff_squared = sum((p1 - p2) ** 2 for p1, p2 in zip(point1, point2))
 
     denominator = (1 - norm1_squared) * (1 - norm2_squared)
-    cosh_dist = 1 + (2 * diff_squared) / denominator
-    hyperbolic_distance = np.arccosh(cosh_dist)
+    cosh_arg = 1 + (2 * diff_squared) / denominator
+    hyperbolic_distance = np.arccosh(cosh_arg)
 
     return hyperbolic_distance

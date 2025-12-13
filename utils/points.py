@@ -8,9 +8,11 @@ import numpy as np
 from .transformations import poincare_to_pseudo_spherical
 
 LOGGER = logging.getLogger(__name__)
+DEFAULT_FALLBACK_RADIUS = 0.85  # Conservative radius to keep well inside the Poincaré ball
+MAX_ATTEMPT_MULTIPLIER = 50  # Try up to this multiple of n_points before falling back
 
 
-def _sample_in_ball(n_points: int, rng: np.random.Generator, radius: float = 0.85) -> np.ndarray:
+def _sample_in_ball(n_points: int, rng: np.random.Generator, radius: float = DEFAULT_FALLBACK_RADIUS) -> np.ndarray:
     points = []
     while len(points) < n_points:
         candidate = rng.uniform(-radius, radius, size=3)
@@ -23,7 +25,7 @@ def sample_points_in_dirichlet_domain(
     manifold_name: str,
     n_points: int,
     seed: int | None = None,
-    fallback_radius: float = 0.85,
+    fallback_radius: float = DEFAULT_FALLBACK_RADIUS,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Sample points inside the Dirichlet domain. If SnapPy is unavailable, fall back to
@@ -32,7 +34,7 @@ def sample_points_in_dirichlet_domain(
     rng = np.random.default_rng(seed)
     try:
         import snappy  # type: ignore
-    except Exception as exc:  # pragma: no cover - optional dependency
+    except ImportError as exc:  # pragma: no cover - optional dependency
         LOGGER.warning("SnapPy not available (%s); using fallback sampling.", exc)
         points = _sample_in_ball(n_points, rng, fallback_radius)
         return points, poincare_to_pseudo_spherical(points)
@@ -51,7 +53,7 @@ def sample_points_in_dirichlet_domain(
     max_corner = verts.max(axis=0)
     accepted: List[np.ndarray] = []
     attempts = 0
-    while len(accepted) < n_points and attempts < n_points * 50:
+    while len(accepted) < n_points and attempts < n_points * MAX_ATTEMPT_MULTIPLIER:
         attempts += 1
         candidate = rng.uniform(min_corner, max_corner)
         inside = True

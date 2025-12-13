@@ -10,10 +10,15 @@ import time
 from utils.sys_generation import construct_numeric_matrix
 
 # Function to solve the system using SVD and compute chi^2, with timing
-def solve_system_via_svd_numeric(A, n_smallest: int = 5):
+def solve_system_via_svd_numeric(A, n_smallest: int = 3):
+    """
+    Compute the n_smallest singular values (and corresponding right singular vectors).
+    The default keeps backward compatibility with the previous top-3 reporting.
+    """
     start_time = time.time()  # Start timing
 
     # Perform Singular Value Decomposition
+    # Left singular vectors are not needed; we still request full SVD to retain Vt
     _, s, Vt = svd(A, full_matrices=False)
 
     # Smallest singular values (and corresponding vectors)
