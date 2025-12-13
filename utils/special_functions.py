@@ -122,7 +122,7 @@ def Y_lm_real_cached(l, m, theta, phi):
 
 # Full eigenfunction Q_{k,l,m}(rho, theta, phi) using normalized Phi_nu_l
 def Q_k_lm(k, l, m, rho, theta, phi):
-    nu = k
+    nu = np.sqrt(k**2 + 1)
     Phi_nu_l_value = Phi_nu_l_cached(nu, l, rho)
     Y_lm_real_value = Y_lm_real_cached(l, m, theta, phi)
     return Phi_nu_l_value * Y_lm_real_value
@@ -133,9 +133,9 @@ def Q_k_lm_cached(k, l, m, rho, theta, phi):
 # Parallelize the expensive computation of Phi_nu_l and Y_lm_real
 def parallel_Phi_Y_lm(lm_pairs, k_value, all_images, n_jobs=1):
     """Parallel computation of Phi_nu_l and Y_lm_real for all lm_pairs and images."""
+    nu = np.sqrt(k_value**2 + 1)
     def compute_Phi_Y_lm(args):
         l, m, rho, theta, phi = args
-        nu = k_value
         Phi_nu_l_val = Phi_nu_l_cached(nu, l, rho)
         Y_lm_real_val = Y_lm_real_cached(l, m, theta, phi)
         return (rho, theta, phi), Phi_nu_l_val * Y_lm_real_val
@@ -226,7 +226,7 @@ def Q_k_lm_vectorized(k_value, lm_pairs, images_array):
 
     for idx, (l, m) in enumerate(lm_pairs):
         # Compute Phi_nu_l for all rho
-        Phi_vals = Phi_nu_l_vectorized(k_value, l, rho)
+        Phi_vals = Phi_nu_l_vectorized(np.sqrt(k_value**2 + 1), l, rho)
         # Compute Y_lm_real for all theta and phi
         Y_vals = Y_lm_real_vectorized(l, m, theta, phi)
         # Multiply radial and angular parts
