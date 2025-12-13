@@ -11,11 +11,13 @@ if "MPLBACKEND" not in os.environ:
     matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+import math
 
 from utils import (
     compute_rho_cutoffs,
     enumerate_ghost_images,
     generate_matrix_system,
+    generate_matrix_system_scalar,
     sample_points_in_dirichlet_domain,
     solve_system_via_svd_numeric,
 )
@@ -45,6 +47,23 @@ def _paper_c(k: float) -> int:
 def _target_M(L: int, c_val: int) -> int:
     N = (L + 1) ** 2
     return int(np.ceil(c_val * N))
+
+
+def _cap_images_to_max_pairs(images: List[Tuple[float, float, float]], max_pairs: int):
+    """Truncate images so that pair count <= max_pairs.
+
+    Args:
+        images: list of (rho, theta, phi)
+        max_pairs: maximum allowed pairwise combinations
+
+    Returns:
+        truncated list of images
+    """
+    if len(images) < 2:
+        return images
+    # Solve n(n-1)/2 <= max_pairs -> n <= (1 + sqrt(1 + 8*max_pairs)) / 2
+    n_cap = int((1 + math.isqrt(1 + 8 * max_pairs)) // 2)
+    return images[: min(len(images), n_cap)]
 
 
 def _build_dirichlet_checker(group_elements: List[np.ndarray], tolerance: float = 1e-6):
@@ -110,6 +129,7 @@ def run_pipeline(
     word_depth: int = 3,
     eigen_threshold: float | None = None,
     benchmark: bool = False,
+    use_scalar_q: bool = False,
 ) -> Dict:
     import time
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -206,16 +226,20 @@ def run_pipeline(
 
         selected_points: List[List[Tuple[float, float, float]]] = []
         rows = 0
+        required_min_points = min(10, max(8, len(points_images)))
+        max_pairs_per_point = max(1500, M_target // max(required_min_points, 1))
+
         for imgs in points_images:
-            contribution = len(imgs) * (len(imgs) - 1) // 2
+            capped_imgs = _cap_images_to_max_pairs(imgs, max_pairs_per_point)
+            contribution = len(capped_imgs) * (len(capped_imgs) - 1) // 2
             if contribution == 0:
                 continue
-            if rows < M_target:
-                selected_points.append(imgs)
+
+            if rows < M_target or len(selected_points) < required_min_points:
+                selected_points.append(capped_imgs)
                 rows += contribution
-                if rows >= M_target:
-                    break
-            else:
+
+            if rows >= M_target and len(selected_points) >= required_min_points:
                 break
 
         fallback_used = cutoff_fallback or sampling_meta.get("fallback_used", False) or geom_fallback or ghost_meta.get("fallback_used", False)
@@ -235,7 +259,10 @@ def run_pipeline(
             continue
 
         t0 = time.perf_counter() if benchmark else None
-        M, N_check, A = generate_matrix_system(selected_points, L, k)
+        if use_scalar_q:
+            M, N_check, A = generate_matrix_system_scalar(selected_points, L, k)
+        else:
+            M, N_check, A = generate_matrix_system(selected_points, L, k)
         if benchmark:
             timings.setdefault("matrix_build", []).append(time.perf_counter() - t0)
         
@@ -367,6 +394,11 @@ def parse_args():
         action="store_true",
         help="Exit with error if SnapPy cannot load manifold generators (prevents accidental synthetic runs)",
     )
+    parser.add_argument(
+        "--use-scalar-q",
+        action="store_true",
+        help="Use scalar Q_k_lm implementation instead of vectorized version for matrix assembly",
+    )
     return parser.parse_args()
 
 
@@ -443,6 +475,7 @@ def main():
         word_depth=args.word_depth,
         eigen_threshold=args.eigen_threshold,
         benchmark=args.benchmark,
+        use_scalar_q=args.use_scalar_q,
     )
     if args.self_check_strict and not result["report"]["ok"]:
         raise SystemExit(1)

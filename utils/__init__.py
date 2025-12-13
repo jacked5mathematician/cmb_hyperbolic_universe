@@ -5,7 +5,7 @@
 from .cutoffs import compute_rho_cutoffs
 from .ghosts import enumerate_ghost_images, get_group_elements
 from .points import sample_points_in_dirichlet_domain, DEFAULT_FALLBACK_RADIUS
-from .sys_generation import generate_matrix_system
+from .sys_generation import generate_matrix_system, generate_matrix_system_scalar
 from .svd import solve_system_via_svd_numeric
 from .eigenvalues import extract_eigenvalues_from_spectrum
 

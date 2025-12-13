@@ -210,17 +210,21 @@ def Phi_nu_l_vectorized(nu, l, rho_array):
     # Avoid division by zero
     sinh_rho[sinh_rho == 0] = np.finfo(float).eps
     # Compute the prefactor
-    prefactor = np.sqrt(np.pi * N_nu_l / (sinh_rho))
+    prefactor = np.sqrt(np.pi * N_nu_l / (2.0 * sinh_rho))
     # Compute x = cosh(rho)
     x = np.cosh(rho_array)
     # Compute Legendre function using mpmath for high-precision
     alpha = -0.5 + 1j * nu
     beta = -0.5 - l
-    # Vectorize the computation of Legendre function
-    legenp_vec = np.vectorize(lambda xi: mp.legenp(alpha, beta, xi))
-    legendre_values = legenp_vec(x)
-    # Convert to numpy array of complex numbers
-    legendre_values = np.array([complex(lv) for lv in legendre_values], dtype=np.complex128)
+    # Vectorize the computation of Legendre function and take the real part to
+    # match the scalar implementation.
+    def _legendre_real(xi):
+        val = mp.legenp(alpha, beta, xi)
+        return float(mp.re(val))
+
+    legenp_vec = np.vectorize(_legendre_real)
+    legendre_values = legenp_vec(x).astype(np.float64)
+
     # Compute Phi_nu_l
     Phi_nu_l_values = prefactor * legendre_values
     return Phi_nu_l_values

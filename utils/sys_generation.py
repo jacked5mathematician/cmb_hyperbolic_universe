@@ -59,6 +59,49 @@ def generate_matrix_system(points_images, L, k_value):
     return A.shape[0], A.shape[1], A
 
 
+def generate_matrix_system_scalar(points_images, L, k_value):
+    """
+    Reference (scalar) implementation of the matrix builder using Q_k_lm.
+
+    Args:
+        points_images: List of lists of (rho, theta, phi) tuples per base point
+        L: Maximum l value (inclusive)
+        k_value: Spectral parameter k
+
+    Returns:
+        (M, N, A): number of rows, number of columns, and the assembled matrix
+    """
+    lm_pairs = [(l, m) for l in range(L + 1) for m in range(-l, l + 1)]
+    N = (L + 1) ** 2
+
+    row_blocks = []
+
+    for images in points_images:
+        n_j = len(images)
+        if n_j < 2:
+            continue
+
+        # Build Q values column-wise using scalar Q_k_lm
+        Q_matrix = np.zeros((n_j, N), dtype=np.complex128)
+        for col, (l, m) in enumerate(lm_pairs):
+            for row, (rho, theta, phi) in enumerate(images):
+                Q_matrix[row, col] = Q_k_lm(k_value, l, m, rho, theta, phi)
+
+        idx_i, idx_j = np.triu_indices(n_j, k=1)
+        A_block = Q_matrix[idx_i, :] - Q_matrix[idx_j, :]
+        row_blocks.append(A_block)
+
+    if row_blocks:
+        A = np.vstack(row_blocks)
+    else:
+        A = np.zeros((0, N), dtype=np.complex128)
+
+    M_expected = sum(len(imgs) * (len(imgs) - 1) // 2 for imgs in points_images)
+    assert A.shape[0] == M_expected, f"M mismatch: expected {M_expected}, got {A.shape[0]}"
+    assert A.shape[1] == N, f"N mismatch: expected {N}, got {A.shape[1]}"
+    return A.shape[0], A.shape[1], A
+
+
 def construct_numeric_matrix(matrix_system, k_value=None):
     """
     Legacy compatibility helper. Converts list-like systems to numpy arrays and

@@ -17,6 +17,12 @@ def solve_system_via_svd_numeric(A, n_smallest: int = 3):
     """
     start_time = time.time()  # Start timing
 
+    # Row L2 normalization to reduce dominance of any single block
+    A = construct_numeric_matrix(A)
+    row_norms = np.linalg.norm(A, axis=1, keepdims=True)
+    row_norms[row_norms == 0] = 1.0
+    A = A / row_norms
+
     # Perform Singular Value Decomposition
     # Left singular vectors are not needed; we still request full SVD to retain Vt
     _, s, Vt = svd(A, full_matrices=False)
