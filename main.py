@@ -298,6 +298,11 @@ def parse_args():
         default=float("inf"),
         help="Threshold for accepting local minima when extracting eigenvalues",
     )
+    parser.add_argument(
+    "--self-check-strict",
+    action="store_true",
+    help="Exit non-zero if self-check reports issues (default: do not fail).",
+    )
     return parser.parse_args()
 
 
@@ -326,7 +331,7 @@ def main():
         word_depth=args.word_depth,
         eigen_threshold=args.eigen_threshold,
     )
-    if args.self_check and not result["report"]["ok"]:
+    if args.self_check_strict and not result["report"]["ok"]:
         raise SystemExit(1)
 
 

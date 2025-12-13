@@ -99,10 +99,11 @@ def sample_points_in_dirichlet_domain(
             n_points,
         )
         extra = _sample_in_ball(n_points - len(accepted), rng, fallback_radius)
-        points = np.vstack([accepted, extra])
+        accepted_arr = np.array(accepted, dtype=float).reshape(-1, 3)
+        points = np.vstack([accepted_arr, extra])
         metadata["fallback_used"] = True
     else:
-        points = np.array(accepted)
+        points = np.array(accepted, dtype=float).reshape(-1, 3)
     metadata["dirichlet_checked"] = True
     pseudo = poincare_to_pseudo_spherical(points)
     return (points, pseudo, metadata) if return_metadata else (points, pseudo)
