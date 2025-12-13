@@ -6,6 +6,28 @@ This repository follows the Cornish & Spergel “method of ghosts” conventions
 - `nu == k` everywhere (no `sqrt(k^2+1)`), and `q^2 = k^2 + 1`.
 - We work in pseudospherical coordinates `(rho, theta, phi)`; rho is the hyperbolic radial distance.
 
+### Paper-Faithful Algorithm Parameters
+
+From Section II of eigenvalueprob.pdf, equations 2.10:
+
+- **L = 10 + floor(k)** - Maximum spherical harmonic degree (not just floor(k))
+- **c = 10 + floor(100/k)** - Oversampling ratio M/N
+- **ℓ_min = 5** - Minimum l for rho_min cutoff
+- **M_target = c × N** where N = (L+1)²
+
+### Chi-Squared Computation
+
+The paper defines chi-squared in equation 2.7 as:
+```
+χ² = ||A·a||²
+```
+
+where A is the constraint matrix and a is the solution vector from SVD. 
+
+**Important**: The paper does NOT mention row normalization of the A matrix. Use `--chi2-mode paper` (default) for paper-faithful computation, or `--chi2-mode legacy` to preserve the old row normalization behavior.
+
+
+
 ### Rho cutoff policy
 
 `compute_rho_cutoffs(k, L, l_min, threshold)` scans for the first rho where

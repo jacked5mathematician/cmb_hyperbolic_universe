@@ -18,7 +18,12 @@ from .transformations import (
 )
 
 # Special functions (internal use, but exported for completeness)
-from .special_functions import Q_k_lm, Q_k_lm_vectorized
+from .special_functions import (
+    Q_k_lm, 
+    Q_k_lm_vectorized,
+    clear_special_function_caches,
+    get_cache_stats,
+)
 
 # Legacy/optional imports (for backward compatibility with old scripts in legacy/)
 try:

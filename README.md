@@ -41,6 +41,49 @@ python scripts/combine_spectra.py --input-dir results
 
 See `docs/algorithm.md` for detailed usage instructions.
 
+## Paper-Faithful Sanity Run
+
+To reproduce spectrum similar to Figure 1 in the paper (docs/eigenvalueprob.pdf) for manifold m188(-1,1):
+
+```bash
+# Fast sanity run with paper-faithful settings (seeded for reproducibility)
+python main.py \
+    --manifold "m188(-1,1)" \
+    --k-min 1.0 --k-max 10.0 --num-k 100 \
+    --n-points 20 \
+    --seed 42 \
+    --chi2-mode paper \
+    --word-depth 3 \
+    --output-dir output_values_local/paper_sanity \
+    --self-check
+
+# For HPC/production runs with finer resolution (closer to paper)
+python main.py \
+    --manifold "m188(-1,1)" \
+    --k-min 1.0 --k-max 10.0 --num-k 500 \
+    --n-points 50 \
+    --seed 42 \
+    --chi2-mode paper \
+    --word-depth 4 \
+    --output-dir output_values_local/paper_full \
+    --require-snappy
+```
+
+**Paper algorithm parameters** (from eigenvalueprob.pdf Section II):
+- L = 10 + floor(k) - Maximum spherical harmonic degree
+- c = 10 + floor(100/k) - Oversampling ratio M/N
+- ℓ_min = 5 - Minimum l for rho_min cutoff
+- Chi² = ||A·a||² (no row normalization in paper mode)
+
+The `--chi2-mode paper` flag ensures chi-squared is computed as in equation 2.7 of the paper, without ad-hoc row normalization. Use `--chi2-mode legacy` to preserve the old normalization behavior.
+
+**Expected output:**
+- Qualitatively resembles Figure 1 in paper: many narrow minima/dips (especially rank 1)
+- No extreme step discontinuities
+- No pathological flatlining near machine precision
+
+See `docs/paper_algorithm_summary.md` for details on paper algorithm.
+
 ## Testing
 
 ```bash
