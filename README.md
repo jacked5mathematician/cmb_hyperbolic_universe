@@ -26,20 +26,39 @@ python main.py --manifold "m003(-2,3)" --k-min 1.0 --k-max 2.0 --num-k 10 \
 - `docs/` - Algorithm documentation and usage guides
 - `legacy/` - Deprecated code (for reference only)
 
+## Performance
+
+Recent optimizations achieve **11× speedup** in matrix assembly by reusing Φ_l(ρ) computations across all m values. This dramatically reduces expensive mpmath evaluations while preserving mathematical correctness.
+
+For detailed performance information, benchmarking, and HPC best practices, see `docs/perf.md`.
+
 ## HPC Usage
 
-For large-scale runs on HPC clusters, use chunking:
+For large-scale runs on HPC clusters, use chunking with optimized flags:
 
 ```bash
-# In Slurm array job (e.g., #SBATCH --array=0-9)
-python main.py --k-chunk-index $SLURM_ARRAY_TASK_ID --k-num-chunks 10 \
-    --require-snappy --output-dir results ...
+# In Slurm array job (e.g., #SBATCH --array=0-399)
+python main.py \
+    --k-chunk-index $SLURM_ARRAY_TASK_ID --k-num-chunks 400 \
+    --manifold "m188(-1,1)" \
+    --k-min 1.0 --k-max 10.0 --num-k 400 \
+    --n-points 60 --word-depth 3 \
+    --chi2-mode paper \
+    --require-snappy \
+    --benchmark \
+    --no-plot --no-eigenvalues \
+    --output-dir results
 
 # Combine results after all chunks complete
 python scripts/combine_spectra.py --input-dir results
 ```
 
-See `docs/algorithm.md` for detailed usage instructions.
+**New flags for HPC**:
+- `--no-plot`: Skip plotting in array jobs (combine step will plot)
+- `--no-eigenvalues`: Skip eigenvalue extraction in array jobs
+- `--benchmark`: Write detailed timing statistics
+
+See `docs/perf.md` for HPC recommendations and `docs/algorithm.md` for detailed usage instructions.
 
 ## Paper-Faithful Sanity Run
 

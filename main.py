@@ -131,6 +131,9 @@ def run_pipeline(
     benchmark: bool = False,
     use_scalar_q: bool = False,
     chi2_mode: str = "paper",
+    no_plot: bool = False,
+    no_eigenvalues: bool = False,
+    clear_caches_per_k: bool = False,
 ) -> Dict:
     import time
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -329,6 +332,11 @@ def run_pipeline(
                 self_check_issues.append(f"Ghost image outside rho window for k={k}")
             if not np.isfinite(chi2_ranks[0][-1]):
                 self_check_issues.append(f"Non-finite chi^2 for k={k}")
+        
+        # Clear caches if requested (reduces memory but costs performance)
+        if clear_caches_per_k:
+            from utils import clear_special_function_caches
+            clear_special_function_caches()
 
     meta_arrays = {
         "L": np.array(L_arr, dtype=int),
@@ -348,7 +356,9 @@ def run_pipeline(
     }
 
     spectrum_path = _save_spectrum(output_dir, k_values, chi2_ranks, meta_arrays)
-    plot_path = _plot_spectrum(output_dir, k_values, chi2_ranks)
+    plot_path = None
+    if not no_plot:
+        plot_path = _plot_spectrum(output_dir, k_values, chi2_ranks)
 
     report = {"ok": len(self_check_issues) == 0, "issues": self_check_issues}
     if self_check:
@@ -358,6 +368,8 @@ def run_pipeline(
     
     # Write timing information if in benchmark mode
     if benchmark and timings:
+        from utils.special_functions import get_cache_stats
+        
         timing_summary = {}
         for phase, times in timings.items():
             if times:
@@ -368,17 +380,35 @@ def run_pipeline(
                     "min": float(np.min(times)),
                     "max": float(np.max(times)),
                 }
+        
+        # Add cache statistics
+        cache_stats = get_cache_stats()
+        timing_summary['cache_stats'] = cache_stats
+        
+        # Calculate hit rates (avoiding division by zero)
+        phi_hit_rate = cache_stats['phi_cache_hits'] / max(cache_stats['phi_calls'], 1)
+        y_lm_hit_rate = cache_stats['y_lm_cache_hits'] / max(cache_stats['y_lm_calls'], 1)
+        
+        if cache_stats['phi_calls'] > 0:
+            timing_summary['cache_stats']['phi_hit_rate'] = phi_hit_rate
+        if cache_stats['y_lm_calls'] > 0:
+            timing_summary['cache_stats']['y_lm_hit_rate'] = y_lm_hit_rate
+        
         timing_path = output_dir / "timings.json"
         with open(timing_path, "w") as f:
             json.dump(timing_summary, f, indent=2)
         LOGGER.info("Wrote benchmark timings to %s", timing_path)
+        LOGGER.info("Cache stats: Phi calls=%d (hit rate=%.2f%%), Y_lm calls=%d (hit rate=%.2f%%), legenp calls=%d",
+                    cache_stats['phi_calls'], 100.0 * phi_hit_rate,
+                    cache_stats['y_lm_calls'], 100.0 * y_lm_hit_rate,
+                    cache_stats['legenp_calls'])
 
     result = {
         "spectrum_path": spectrum_path,
         "plot_path": plot_path,
         "report": report,
     }
-    if eigen_threshold is not None:
+    if eigen_threshold is not None and not no_eigenvalues:
         eigen_path = extract_eigenvalues_from_spectrum(
             spectrum_path, output_dir, threshold=eigen_threshold, refine=True
         )
@@ -444,13 +474,31 @@ def parse_args():
         default="paper",
         help="Chi-squared computation mode: 'paper' (default, no row normalization) or 'legacy' (with row normalization)",
     )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Enable cProfile profiling and write profile.prof to output directory",
+    )
+    parser.add_argument(
+        "--no-plot",
+        action="store_true",
+        help="Skip plotting chi2_spectrum.png (useful for HPC array jobs)",
+    )
+    parser.add_argument(
+        "--no-eigenvalues",
+        action="store_true",
+        help="Skip eigenvalue extraction (useful for HPC array jobs)",
+    )
+    parser.add_argument(
+        "--clear-caches-per-k",
+        action="store_true",
+        help="Clear special function caches after each k value (reduces memory at cost of performance)",
+    )
     return parser.parse_args()
 
 
-def main():
-    args = parse_args()
-
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+def _run_main_logic(args):
+    """Main logic separated for profiling support."""
     output_dir = Path(args.output_dir)
     
     # Check SnapPy availability if required
@@ -522,9 +570,50 @@ def main():
         benchmark=args.benchmark,
         use_scalar_q=args.use_scalar_q,
         chi2_mode=args.chi2_mode,
+        no_plot=args.no_plot,
+        no_eigenvalues=args.no_eigenvalues,
+        clear_caches_per_k=args.clear_caches_per_k,
     )
     if args.self_check_strict and not result["report"]["ok"]:
         raise SystemExit(1)
+    return result
+
+
+def main():
+    args = parse_args()
+    
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    
+    if args.profile:
+        import cProfile
+        import pstats
+        from pathlib import Path
+        
+        output_dir = Path(args.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        profile_path = output_dir / "profile.prof"
+        
+        LOGGER.info("Profiling enabled, output will be saved to %s", profile_path)
+        profiler = cProfile.Profile()
+        profiler.enable()
+        
+        try:
+            result = _run_main_logic(args)
+        finally:
+            profiler.disable()
+            profiler.dump_stats(str(profile_path))
+            LOGGER.info("Profile saved to %s", profile_path)
+            
+            # Also print top 20 functions by cumulative time
+            stats = pstats.Stats(profiler)
+            stats.strip_dirs()
+            stats.sort_stats('cumulative')
+            LOGGER.info("Top 20 functions by cumulative time:")
+            stats.print_stats(20)
+    else:
+        result = _run_main_logic(args)
+    
+    return result
 
 
 if __name__ == "__main__":
