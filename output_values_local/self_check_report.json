@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "issues": [
+    "Base point outside Dirichlet approximation for k=1.0",
+    "Base point outside Dirichlet approximation for k=1.2"
+  ]
+}
