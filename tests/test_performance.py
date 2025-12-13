@@ -41,14 +41,15 @@ def test_phi_reuse_optimization_reduces_calls():
     # - L+1 unique l values (l=0,1,2) → 3 unique l values
     # - Each l needs evaluation at 3 rho values
     # - Total legenp calls should be 3 (unique l) * 3 (rho values) = 9
-    # Without optimization, it would be 9 (lm pairs) * 3 (rho values) = 27
+    # Without optimization, it would be N (lm pairs) * num_images (rho values)
     
     # Allow some tolerance for implementation details
     assert stats['legenp_calls'] <= 12, f"Expected ≤12 legenp calls, got {stats['legenp_calls']}"
     assert stats['legenp_calls'] >= 9, f"Expected ≥9 legenp calls, got {stats['legenp_calls']}"
     
     # Verify the reduction is significant (at least 2× reduction)
-    naive_calls = N * len(points_images[0])  # Would be 9*3=27 without optimization
+    num_images = len(points_images[0])
+    naive_calls = N * num_images  # Without optimization: all lm_pairs * all images
     actual_calls = stats['legenp_calls']
     reduction_factor = naive_calls / actual_calls
     assert reduction_factor >= 2.0, f"Expected ≥2× reduction, got {reduction_factor:.1f}×"
