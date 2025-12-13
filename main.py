@@ -402,6 +402,11 @@ def main():
             LOGGER.error("Invalid chunk index %s (must be 0 <= index < %s)", args.k_chunk_index, args.k_num_chunks)
             raise SystemExit(1)
         
+        if args.k_num_chunks > len(k_values):
+            LOGGER.error("Number of chunks (%s) cannot exceed number of k-values (%s)", 
+                        args.k_num_chunks, len(k_values))
+            raise SystemExit(1)
+        
         # Split k_values into chunks
         chunk_size = len(k_values) // args.k_num_chunks
         remainder = len(k_values) % args.k_num_chunks

@@ -76,8 +76,13 @@ def combine_chunks(chunk_files: List[Tuple[int, Path]]) -> Dict[str, np.ndarray]
     
     # Sort chunks by k_values to ensure correct ordering
     # (should already be sorted by chunk index, but verify)
-    k_sorted_indices = np.argsort([chunk["k_values"][0] for chunk in chunks_data])
-    chunks_data = [chunks_data[i] for i in k_sorted_indices]
+    # Skip empty chunks
+    non_empty_chunks = [chunk for chunk in chunks_data if len(chunk.get("k_values", [])) > 0]
+    if not non_empty_chunks:
+        raise ValueError("All chunks are empty (no k_values)")
+    
+    k_sorted_indices = np.argsort([chunk["k_values"][0] for chunk in non_empty_chunks])
+    chunks_data = [non_empty_chunks[i] for i in k_sorted_indices]
     
     # Combine arrays
     combined = {}

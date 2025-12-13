@@ -27,7 +27,12 @@ def generate_matrix_system(points_images, L, k_value):
             continue
         
         # Convert images to numpy array shape (n_j, 3)
-        images_array = np.array(images, dtype=np.float64)
+        try:
+            images_array = np.array(images, dtype=np.float64)
+            if images_array.shape != (n_j, 3):
+                raise ValueError(f"Expected images array shape ({n_j}, 3), got {images_array.shape}")
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"Failed to convert images to array: {e}. Expected list of (rho, theta, phi) tuples.")
         
         # Compute Q-values for all images and all (l,m) in one batch: shape (n_j, N)
         Q_matrix = Q_k_lm_vectorized(k_value, lm_pairs, images_array)

@@ -112,8 +112,28 @@ RHO_CACHE_PRECISION = 1e-8
 ANGLE_CACHE_PRECISION = 1e-8
 
 def _quantize(value, precision):
-    """Round a value to the given precision for cache keys."""
-    return round(float(value) / precision) * precision
+    """Round a value to the given precision for cache keys.
+    
+    Args:
+        value: The value to quantize
+        precision: The quantization step size
+    
+    Returns:
+        Quantized value, or original if quantization would overflow
+    """
+    try:
+        # Convert to float and quantize
+        fval = float(value)
+        if not np.isfinite(fval):
+            return fval  # Return as-is for inf/nan
+        # Quantize by rounding to nearest multiple of precision
+        quantized = np.round(fval / precision) * precision
+        # Check if result is finite
+        if np.isfinite(quantized):
+            return float(quantized)
+        return fval  # Fallback to original if quantization overflows
+    except (ValueError, OverflowError):
+        return float(value)  # Fallback for edge cases
 
 def Phi_nu_l_cached(nu, l, chi):
     """Cached version of the normalized hyperspherical Bessel function Phi^nu_l(chi) for K = -1.
