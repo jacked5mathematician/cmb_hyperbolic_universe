@@ -269,12 +269,12 @@ def run_pipeline(
     if eigen_threshold is not None:
         try:
             from utils.eigenvalues import extract_eigenvalues_from_spectrum
-        except Exception:
+        except ImportError:
             # Lazy import to avoid circularity during tests if module missing
             extract_eigenvalues_from_spectrum = None
         if extract_eigenvalues_from_spectrum is not None:
             eigen_path = extract_eigenvalues_from_spectrum(
-                spectrum_path, output_dir, threshold=eigen_threshold, window=1
+                spectrum_path, output_dir, threshold=eigen_threshold, refine=True
             )
             result["eigenvalues_path"] = eigen_path
     return result

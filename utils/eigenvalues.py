@@ -34,7 +34,7 @@ def extract_eigenvalues_from_spectrum(
     spectrum_path: Path | str,
     output_dir: Path | str,
     threshold: float | None = None,
-    window: int = 1,
+    refine: bool = True,
 ) -> Path:
     """
     Load spectrum.npz, detect local minima, and write eigenvalues.csv with
@@ -62,7 +62,7 @@ def extract_eigenvalues_from_spectrum(
         if threshold is not None and chi_val > threshold:
             continue
 
-        k_refined, chi_refined = _refine_minimum(k_values, chi1, idx) if window else (float(k_values[idx]), chi_val)
+        k_refined, chi_refined = _refine_minimum(k_values, chi1, idx) if refine else (float(k_values[idx]), chi_val)
         multiplicity_hint = 0
         for curve in rank_curves:
             if idx < len(curve) and np.isfinite(curve[idx]) and curve[idx] <= chi_val * 1.1:

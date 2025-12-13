@@ -19,7 +19,7 @@ def parse_args():
 
 def main():
     args = parse_args()
-    extract_eigenvalues_from_spectrum(args.spectrum, args.output_dir, threshold=args.threshold, window=1)
+    extract_eigenvalues_from_spectrum(args.spectrum, args.output_dir, threshold=args.threshold, refine=True)
 
 
 if __name__ == "__main__":

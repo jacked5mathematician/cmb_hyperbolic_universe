@@ -11,6 +11,7 @@ from .transformations import apply_so31_action, project_to_klein, klein_to_pseud
 LOGGER = logging.getLogger(__name__)
 MATRIX_ROUND_DECIMALS = 8  # Precision used for deduplicating group elements
 MAX_IMAGES_DEFAULT = 200
+GhostImages = List[List[Tuple[float, float, float]]]
 
 
 def _load_generators(manifold_name: str) -> List[np.ndarray]:
@@ -96,7 +97,7 @@ def enumerate_ghost_images(
     max_images: int = MAX_IMAGES_DEFAULT,
     group_elements: List[np.ndarray] | None = None,
     return_metadata: bool = False,
-) -> List[List[Tuple[float, float, float]]] | tuple[List[List[Tuple[float, float, float]]], dict]:
+) -> GhostImages | tuple[GhostImages, dict]:
     """
     Enumerate ghost images for each base point using group words up to max_word_length.
     Falls back to a synthetic generator if SnapPy data are unavailable.
