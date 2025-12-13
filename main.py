@@ -131,6 +131,9 @@ def run_pipeline(
     benchmark: bool = False,
     use_scalar_q: bool = False,
     chi2_mode: str = "paper",
+    no_plot: bool = False,
+    no_eigenvalues: bool = False,
+    clear_caches_per_k: bool = False,
 ) -> Dict:
     import time
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -329,6 +332,11 @@ def run_pipeline(
                 self_check_issues.append(f"Ghost image outside rho window for k={k}")
             if not np.isfinite(chi2_ranks[0][-1]):
                 self_check_issues.append(f"Non-finite chi^2 for k={k}")
+        
+        # Clear caches if requested (reduces memory but costs performance)
+        if clear_caches_per_k:
+            from utils import clear_special_function_caches
+            clear_special_function_caches()
 
     meta_arrays = {
         "L": np.array(L_arr, dtype=int),
@@ -348,7 +356,9 @@ def run_pipeline(
     }
 
     spectrum_path = _save_spectrum(output_dir, k_values, chi2_ranks, meta_arrays)
-    plot_path = _plot_spectrum(output_dir, k_values, chi2_ranks)
+    plot_path = None
+    if not no_plot:
+        plot_path = _plot_spectrum(output_dir, k_values, chi2_ranks)
 
     report = {"ok": len(self_check_issues) == 0, "issues": self_check_issues}
     if self_check:
@@ -397,7 +407,7 @@ def run_pipeline(
         "plot_path": plot_path,
         "report": report,
     }
-    if eigen_threshold is not None:
+    if eigen_threshold is not None and not no_eigenvalues:
         eigen_path = extract_eigenvalues_from_spectrum(
             spectrum_path, output_dir, threshold=eigen_threshold, refine=True
         )
@@ -467,6 +477,21 @@ def parse_args():
         "--profile",
         action="store_true",
         help="Enable cProfile profiling and write profile.prof to output directory",
+    )
+    parser.add_argument(
+        "--no-plot",
+        action="store_true",
+        help="Skip plotting chi2_spectrum.png (useful for HPC array jobs)",
+    )
+    parser.add_argument(
+        "--no-eigenvalues",
+        action="store_true",
+        help="Skip eigenvalue extraction (useful for HPC array jobs)",
+    )
+    parser.add_argument(
+        "--clear-caches-per-k",
+        action="store_true",
+        help="Clear special function caches after each k value (reduces memory at cost of performance)",
     )
     return parser.parse_args()
 
@@ -544,6 +569,9 @@ def _run_main_logic(args):
         benchmark=args.benchmark,
         use_scalar_q=args.use_scalar_q,
         chi2_mode=args.chi2_mode,
+        no_plot=args.no_plot,
+        no_eigenvalues=args.no_eigenvalues,
+        clear_caches_per_k=args.clear_caches_per_k,
     )
     if args.self_check_strict and not result["report"]["ok"]:
         raise SystemExit(1)

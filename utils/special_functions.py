@@ -344,6 +344,12 @@ def normalization_constant(l, m):
     return np.sqrt((2 * l + 1) / (4 * np.pi) * mp.factorial(l - abs(m)) / mp.factorial(l + abs(m)))
 
 def Q_k_lm_vectorized(k_value, lm_pairs, images_array):
+    """Optimized vectorized computation that reuses Phi_l across all m for same l.
+    
+    Key optimization: Phi_nu_l(k, l, rho) is independent of m, so we compute it
+    once per l and reuse for all m values with that l. This reduces expensive
+    mpmath legenp calls significantly.
+    """
     # Extract rho, theta, phi from images_array
     rho = images_array[:, 0]
     theta = images_array[:, 1]
@@ -351,13 +357,23 @@ def Q_k_lm_vectorized(k_value, lm_pairs, images_array):
     num_images = len(rho)
 
     Q_values = np.zeros((num_images, len(lm_pairs)), dtype=np.complex128)
-
+    
+    # Group lm_pairs by l to reuse Phi computations
+    # Build a dict: l -> list of (idx, m) where idx is column index in lm_pairs
+    l_to_m_indices = {}
     for idx, (l, m) in enumerate(lm_pairs):
-        # Compute Phi_nu_l for all rho
+        if l not in l_to_m_indices:
+            l_to_m_indices[l] = []
+        l_to_m_indices[l].append((idx, m))
+    
+    # Process each unique l value
+    for l, m_indices in l_to_m_indices.items():
+        # Compute Phi_nu_l once for this l and all rho values
         Phi_vals = Phi_nu_l_vectorized(k_value, l, rho)
-        # Compute Y_lm_real for all theta and phi
-        Y_vals = Y_lm_real_vectorized(l, m, theta, phi)
-        # Multiply radial and angular parts
-        Q_values[:, idx] = Phi_vals * Y_vals
+        
+        # For each m with this l, compute Y_lm and multiply by cached Phi
+        for idx, m in m_indices:
+            Y_vals = Y_lm_real_vectorized(l, m, theta, phi)
+            Q_values[:, idx] = Phi_vals * Y_vals
 
     return Q_values
