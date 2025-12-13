@@ -184,7 +184,8 @@ def test_paper_mode_differs_from_legacy(tmp_path: Path):
     
     # The chi^2 values should be different (row normalization changes them)
     # They should differ by more than floating point error
-    relative_diff = np.abs(chi2_paper - chi2_legacy) / (np.abs(chi2_paper) + 1e-30)
+    SMALL_EPSILON = 1e-30  # Small value to avoid division by zero
+    relative_diff = np.abs(chi2_paper - chi2_legacy) / (np.abs(chi2_paper) + SMALL_EPSILON)
     
     # Expect significant difference (>1% relative change)
     assert np.any(relative_diff > 0.01), \

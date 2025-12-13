@@ -303,8 +303,9 @@ def run_pipeline(
         sigma_max_arr.append(svd_diag['sigma_max'])
         A_frobenius_arr.append(float(np.linalg.norm(A, ord='fro')))
         A_max_abs_arr.append(float(np.abs(A).max()) if A.size > 0 else np.nan)
-        A_nonzero = np.abs(A[A != 0])
-        A_min_nonzero_arr.append(float(A_nonzero.min()) if A_nonzero.size > 0 else np.nan)
+        # Compute min of nonzero elements without creating intermediate copy
+        nonzero_mask = (A != 0)
+        A_min_nonzero_arr.append(float(np.abs(A[nonzero_mask]).min()) if nonzero_mask.any() else np.nan)
         images_per_point_arr.append(float(np.mean([len(imgs) for imgs in selected_points])))
 
         L_arr.append(L)

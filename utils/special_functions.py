@@ -139,6 +139,29 @@ def _quantize(value, precision):
     except (ValueError, OverflowError):
         return float(value)  # Fallback for edge cases
 
+def _make_cache_key(*args, precisions=None):
+    """Helper to create consistent cache keys with optional quantization.
+    
+    Args:
+        *args: Values to include in the key
+        precisions: List of quantization precisions (or None for no quantization)
+    
+    Returns:
+        Tuple suitable for use as a dictionary key
+    """
+    if precisions is None:
+        return tuple(float(arg) if isinstance(arg, (int, float)) else arg for arg in args)
+    
+    key_parts = []
+    for i, arg in enumerate(args):
+        if isinstance(arg, (int, float)) and i < len(precisions) and precisions[i] is not None:
+            key_parts.append(_quantize(arg, precisions[i]))
+        elif isinstance(arg, (int, float)):
+            key_parts.append(float(arg))
+        else:
+            key_parts.append(int(arg) if hasattr(arg, '__int__') else arg)
+    return tuple(key_parts)
+
 def clear_special_function_caches():
     """Clear all cached special function values. Useful for debugging or memory management."""
     global phi_cache, y_lm_cache
@@ -159,8 +182,7 @@ def Phi_nu_l_cached(nu, l, chi):
     Uses quantized rho for bounded cache."""
     if not USE_CACHE:
         return Phi_nu_l(nu, l, chi)
-    chi_q = _quantize(chi, RHO_CACHE_PRECISION)
-    key = (float(nu), int(l), chi_q)
+    key = _make_cache_key(nu, l, chi, precisions=[None, None, RHO_CACHE_PRECISION])
     if key not in phi_cache:
         phi_cache[key] = Phi_nu_l(nu, l, chi)
     return phi_cache[key]
@@ -170,9 +192,7 @@ def Y_lm_real_cached(l, m, theta, phi):
     Uses quantized angles for bounded cache."""
     if not USE_CACHE:
         return Y_lm_real(l, m, theta, phi)
-    theta_q = _quantize(theta, ANGLE_CACHE_PRECISION)
-    phi_q = _quantize(phi, ANGLE_CACHE_PRECISION)
-    key = (int(l), int(m), theta_q, phi_q)
+    key = _make_cache_key(l, m, theta, phi, precisions=[None, None, ANGLE_CACHE_PRECISION, ANGLE_CACHE_PRECISION])
     if key not in y_lm_cache:
         y_lm_cache[key] = Y_lm_real(l, m, theta, phi)
     return y_lm_cache[key]
