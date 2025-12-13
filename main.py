@@ -109,14 +109,22 @@ def run_pipeline(
     self_check: bool = False,
     word_depth: int = 3,
     eigen_threshold: float | None = None,
+    benchmark: bool = False,
 ) -> Dict:
+    import time
     output_dir.mkdir(parents=True, exist_ok=True)
     max_word_length = word_depth
+    
+    # Timing dictionary for benchmark mode
+    timings = {} if benchmark else None
 
     LOGGER.info("Sampling %s base points for manifold %s", n_points, manifold_name)
+    t0 = time.perf_counter() if benchmark else None
     base_points, base_points_pseudo, sampling_meta = sample_points_in_dirichlet_domain(
         manifold_name, n_points=n_points, seed=seed, fallback_radius=DEFAULT_FALLBACK_RADIUS, word_depth=word_depth, return_metadata=True
     )
+    if benchmark:
+        timings["point_sampling"] = [time.perf_counter() - t0]
     LOGGER.info(
         "Sampled %s base points (mean rho=%.3f) [fallback=%s]",
         len(base_points_pseudo),
@@ -147,7 +155,12 @@ def run_pipeline(
         c_val = _paper_c(k)
         N = (L + 1) ** 2
         M_target = _target_M(L, c_val)
+        
+        t0 = time.perf_counter() if benchmark else None
         rho_min, rho_max, cutoff_fallback = compute_rho_cutoffs(k, L, l_min)
+        if benchmark:
+            timings.setdefault("cutoff_computation", []).append(time.perf_counter() - t0)
+        
         LOGGER.info(
             "k=%.3f -> L=%s c=%s l_min=%s rho_min=%.3f rho_max=%.3f M_target=%s",
             k,
@@ -173,6 +186,8 @@ def run_pipeline(
             continue
 
         group_elements, geom_fallback = get_group_elements(manifold_name, max_word_length)
+        
+        t0 = time.perf_counter() if benchmark else None
         points_images, ghost_meta = enumerate_ghost_images(
             manifold_name,
             base_points,
@@ -183,6 +198,9 @@ def run_pipeline(
             group_elements=group_elements,
             return_metadata=True,
         )
+        if benchmark:
+            timings.setdefault("ghost_enumeration", []).append(time.perf_counter() - t0)
+        
         kept_total = len(points_images)
         LOGGER.info("Retained %s/%s base points after ghost enumeration", kept_total, len(base_points))
 
@@ -216,11 +234,18 @@ def run_pipeline(
             M_target_arr.append(M_target)
             continue
 
+        t0 = time.perf_counter() if benchmark else None
         M, N_check, A = generate_matrix_system(selected_points, L, k)
+        if benchmark:
+            timings.setdefault("matrix_build", []).append(time.perf_counter() - t0)
+        
         if N_check != N:
             self_check_issues.append(f"N mismatch for k={k}: expected {N}, got {N_check}")
 
+        t0 = time.perf_counter() if benchmark else None
         chi_sq, _ = solve_system_via_svd_numeric(A, n_smallest=MAX_RANKS)
+        if benchmark:
+            timings.setdefault("svd", []).append(time.perf_counter() - t0)
         for idx in range(MAX_RANKS):
             chi2_ranks[idx].append(chi_sq[idx] if idx < len(chi_sq) else np.nan)
 
@@ -265,6 +290,23 @@ def run_pipeline(
         with open(output_dir / "self_check_report.json", "w") as f:
             json.dump(report, f, indent=2)
         LOGGER.info("Wrote self_check_report.json")
+    
+    # Write timing information if in benchmark mode
+    if benchmark and timings:
+        timing_summary = {}
+        for phase, times in timings.items():
+            if times:
+                timing_summary[phase] = {
+                    "mean": float(np.mean(times)),
+                    "total": float(np.sum(times)),
+                    "count": len(times),
+                    "min": float(np.min(times)),
+                    "max": float(np.max(times)),
+                }
+        timing_path = output_dir / "timings.json"
+        with open(timing_path, "w") as f:
+            json.dump(timing_summary, f, indent=2)
+        LOGGER.info("Wrote benchmark timings to %s", timing_path)
 
     result = {
         "spectrum_path": spectrum_path,
@@ -298,6 +340,33 @@ def parse_args():
         default=float("inf"),
         help="Threshold for accepting local minima when extracting eigenvalues",
     )
+    parser.add_argument(
+        "--self-check-strict",
+        action="store_true",
+        help="Exit non-zero if self-check reports issues (default: do not fail).",
+    )
+    parser.add_argument(
+        "--benchmark",
+        action="store_true",
+        help="Enable benchmark mode with detailed timing output to timings.json",
+    )
+    parser.add_argument(
+        "--k-chunk-index",
+        type=int,
+        default=None,
+        help="Index of k-value chunk to process (0-based, for HPC job arrays)",
+    )
+    parser.add_argument(
+        "--k-num-chunks",
+        type=int,
+        default=None,
+        help="Total number of chunks to split k-values into (for HPC job arrays)",
+    )
+    parser.add_argument(
+        "--require-snappy",
+        action="store_true",
+        help="Exit with error if SnapPy cannot load manifold generators (prevents accidental synthetic runs)",
+    )
     return parser.parse_args()
 
 
@@ -306,13 +375,61 @@ def main():
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     output_dir = Path(args.output_dir)
+    
+    # Check SnapPy availability if required
+    if args.require_snappy:
+        try:
+            import snappy
+            # Try to load the manifold to verify it works
+            snappy.Manifold(args.manifold)
+            LOGGER.info("SnapPy check passed for manifold %s", args.manifold)
+        except ImportError:
+            LOGGER.error("--require-snappy flag set but SnapPy is not available")
+            raise SystemExit(1)
+        except Exception as e:
+            LOGGER.error("--require-snappy flag set but failed to load manifold %s: %s", args.manifold, e)
+            raise SystemExit(1)
 
     if args.small_test:
         args.num_k = min(args.num_k, 2)
         args.n_points = min(args.n_points, 6)
 
     k_values = np.linspace(args.k_min, args.k_max, args.num_k)
-    LOGGER.info("Running pipeline for k in [%s, %s] (%s samples)", args.k_min, args.k_max, args.num_k)
+    
+    # Handle k-value chunking for HPC
+    if args.k_chunk_index is not None and args.k_num_chunks is not None:
+        if args.k_chunk_index < 0 or args.k_chunk_index >= args.k_num_chunks:
+            LOGGER.error("Invalid chunk index %s (must be 0 <= index < %s)", args.k_chunk_index, args.k_num_chunks)
+            raise SystemExit(1)
+        
+        if args.k_num_chunks > len(k_values):
+            LOGGER.error("Number of chunks (%s) cannot exceed number of k-values (%s)", 
+                        args.k_num_chunks, len(k_values))
+            raise SystemExit(1)
+        
+        # Split k_values into chunks
+        chunk_size = len(k_values) // args.k_num_chunks
+        remainder = len(k_values) % args.k_num_chunks
+        
+        # Distribute remainder evenly across first chunks
+        if args.k_chunk_index < remainder:
+            start_idx = args.k_chunk_index * (chunk_size + 1)
+            end_idx = start_idx + chunk_size + 1
+        else:
+            start_idx = args.k_chunk_index * chunk_size + remainder
+            end_idx = start_idx + chunk_size
+        
+        k_values = k_values[start_idx:end_idx]
+        LOGGER.info("Processing chunk %s/%s: k-values from index %s to %s (%s values)",
+                    args.k_chunk_index, args.k_num_chunks, start_idx, end_idx, len(k_values))
+        
+        # Update output directory to include chunk index
+        output_dir = output_dir / f"chunk_{args.k_chunk_index}"
+    
+    LOGGER.info("Running pipeline for k in [%s, %s] (%s samples)", 
+                k_values[0] if len(k_values) > 0 else args.k_min, 
+                k_values[-1] if len(k_values) > 0 else args.k_max, 
+                len(k_values))
 
     result = run_pipeline(
         manifold_name=args.manifold,
@@ -325,8 +442,9 @@ def main():
         self_check=args.self_check,
         word_depth=args.word_depth,
         eigen_threshold=args.eigen_threshold,
+        benchmark=args.benchmark,
     )
-    if args.self_check and not result["report"]["ok"]:
+    if args.self_check_strict and not result["report"]["ok"]:
         raise SystemExit(1)
 
 

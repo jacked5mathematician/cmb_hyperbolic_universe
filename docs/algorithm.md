@@ -41,8 +41,73 @@ unordered pair of images for each base point). Assertions check both formulas.
 
 ### Running locally vs HPC
 
-- Quick local run: `python main.py --small-test --dry-run` to validate configuration, then
-  `python main.py --small-test` to execute the fast end-to-end pipeline.
-- For larger scans adjust `--k-min/--k-max/--num-k`, `--n-points`, and `--output-dir`.
+#### Local quick run
+
+For development and testing:
+```bash
+# Dry run to validate configuration
+python main.py --small-test --dry-run
+
+# Quick test with self-checks
+python main.py --small-test --self-check
+
+# Benchmark mode to measure performance
+python main.py --manifold "m003(-2,3)" --k-min 1.0 --k-max 1.5 --num-k 5 \
+    --n-points 10 --benchmark --output-dir output_bench
+```
+
+The `--benchmark` flag writes detailed timing information to `timings.json` in the output directory,
+including mean/min/max times for cutoff computation, point sampling, ghost enumeration, matrix 
+build, and SVD.
+
+#### HPC chunked run (Slurm array)
+
+For large k-sweeps on HPC clusters, use chunking to parallelize across nodes:
+
+```bash
+# In your Slurm script, use array indices to process chunks:
+#SBATCH --array=0-9  # 10 chunks
+
+python main.py --manifold "m003(-2,3)" \
+    --k-min 1.0 --k-max 10.0 --num-k 1000 \
+    --n-points 50 \
+    --k-chunk-index $SLURM_ARRAY_TASK_ID \
+    --k-num-chunks 10 \
+    --output-dir results
+```
+
+Each chunk will create a subdirectory `results/chunk_N/` containing `spectrum.npz` for its 
+k-value range.
+
+#### Combine chunked results
+
+After all chunks complete, merge them:
+
+```bash
+python scripts/combine_spectra.py --input-dir results --output-file results/spectrum.npz
+```
+
+This will combine all `chunk_*/spectrum.npz` files into a single `spectrum.npz`.
+
+#### SnapPy dependency control
+
+To ensure you're using real manifold data (not synthetic fallback) on HPC:
+
+```bash
+python main.py --manifold "m003(-2,3)" --require-snappy ...
+```
+
+The `--require-snappy` flag will exit with an error if SnapPy is unavailable or cannot load
+the manifold, preventing accidental fallback to synthetic ghost images.
+
+#### Expected outputs
+
+For each run, the pipeline creates:
+- `spectrum.npz`: k-values and chi² ranks (1-5), plus metadata (L, M, N, rho_min, rho_max, etc.)
+- `chi2_spectrum.png`: Plot of chi² vs k
+- `eigenvalues.csv`: Extracted eigenvalues (if `--eigen-threshold` set)
+- `self_check_report.json`: Validation results (if `--self-check` used)
+- `timings.json`: Performance timings (if `--benchmark` used)
+
 Logging records per-k values of `(L, c, rho_min, rho_max)`, base-point retention, matrix shape,
 and the smallest singular values.

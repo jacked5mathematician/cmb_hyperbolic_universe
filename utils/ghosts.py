@@ -29,16 +29,16 @@ def _load_generators(manifold_name: str) -> List[np.ndarray]:
         LOGGER.warning("Failed to load pairing matrices for %s (%s); using synthetic ghosts.", manifold_name, exc)
         return []
 
-    generators = []
+    generators: List[np.ndarray] = []
     for mat in pairing_mats:
-        arr = np.array(mat, dtype=float).reshape(4, 4)
+        # SnapPy returns snappy.matrix.SimpleMatrix; it must be expanded to entries first.
+        arr = np.array(list(mat), dtype=float).reshape(4, 4)
         generators.append(arr)
         try:
             generators.append(np.linalg.inv(arr))
         except np.linalg.LinAlgError:
             pass
     return generators
-
 
 def enumerate_group_elements(generators: List[np.ndarray], max_depth: int) -> List[np.ndarray]:
     """

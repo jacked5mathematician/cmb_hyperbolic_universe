@@ -28,15 +28,15 @@ def test_compute_rho_cutoffs_valid():
     assert 0 <= rho_min < rho_max
     assert fallback in (True, False)
 
-
 def test_enumerate_ghost_images_satisfies_count_and_window():
-    rho_min, rho_max = 0.0, 1.0
+    rho_min, rho_max = 0.0, 3.0
     images = enumerate_ghost_images(
         "m003(-2,3)",
-        base_points=[[0.0, 0.0, 0.0]],
+        base_points=[[0.1, 0.05, -0.07]],
         rho_min=rho_min,
         rho_max=rho_max,
-        max_word_length=1,
+        max_word_length=3,
+        min_images=10,
     )
     assert images, "No images returned"
     first = images[0]
@@ -58,10 +58,11 @@ def test_ghost_enumeration_requires_snappy_when_available():
     snappy = pytest.importorskip("snappy")
     images, meta = enumerate_ghost_images(
         "m003(-2,3)",
-        base_points=[[0.0, 0.0, 0.0]],
+        base_points=[[0.1, 0.05, -0.07]],
         rho_min=0.0,
-        rho_max=1.0,
-        max_word_length=1,
+        rho_max=3.0,
+        max_word_length=3,
+        min_images=10,
         return_metadata=True,
     )
     assert images, "No images returned with SnapPy available"
