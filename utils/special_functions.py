@@ -108,8 +108,12 @@ def Y_lm_real(l, m, theta, phi):
 phi_cache = {}
 y_lm_cache = {}
 # Quantization precision for cache keys to prevent unbounded growth
+# Lower values = more aggressive quantization = smaller cache but less precision
+# Higher values = finer quantization = larger cache but better precision
 RHO_CACHE_PRECISION = 1e-8
 ANGLE_CACHE_PRECISION = 1e-8
+# Flag to disable caching for debugging
+USE_CACHE = True
 
 def _quantize(value, precision):
     """Round a value to the given precision for cache keys.
@@ -135,9 +139,26 @@ def _quantize(value, precision):
     except (ValueError, OverflowError):
         return float(value)  # Fallback for edge cases
 
+def clear_special_function_caches():
+    """Clear all cached special function values. Useful for debugging or memory management."""
+    global phi_cache, y_lm_cache
+    phi_cache.clear()
+    y_lm_cache.clear()
+
+def get_cache_stats():
+    """Return statistics about cache usage."""
+    return {
+        'phi_cache_size': len(phi_cache),
+        'y_lm_cache_size': len(y_lm_cache),
+        'rho_precision': RHO_CACHE_PRECISION,
+        'angle_precision': ANGLE_CACHE_PRECISION,
+    }
+
 def Phi_nu_l_cached(nu, l, chi):
     """Cached version of the normalized hyperspherical Bessel function Phi^nu_l(chi) for K = -1.
     Uses quantized rho for bounded cache."""
+    if not USE_CACHE:
+        return Phi_nu_l(nu, l, chi)
     chi_q = _quantize(chi, RHO_CACHE_PRECISION)
     key = (float(nu), int(l), chi_q)
     if key not in phi_cache:
@@ -147,6 +168,8 @@ def Phi_nu_l_cached(nu, l, chi):
 def Y_lm_real_cached(l, m, theta, phi):
     """Cached version of the real-valued spherical harmonics function.
     Uses quantized angles for bounded cache."""
+    if not USE_CACHE:
+        return Y_lm_real(l, m, theta, phi)
     theta_q = _quantize(theta, ANGLE_CACHE_PRECISION)
     phi_q = _quantize(phi, ANGLE_CACHE_PRECISION)
     key = (int(l), int(m), theta_q, phi_q)
