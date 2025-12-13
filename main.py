@@ -130,6 +130,7 @@ def run_pipeline(
     eigen_threshold: float | None = None,
     benchmark: bool = False,
     use_scalar_q: bool = False,
+    chi2_mode: str = "paper",
 ) -> Dict:
     import time
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -168,6 +169,14 @@ def run_pipeline(
     fallback_arr: List[bool] = []
     M_target_arr: List[int] = []
     self_check_issues: List[str] = []
+    
+    # Enhanced diagnostics
+    sigma_min_arr: List[float] = []
+    sigma_max_arr: List[float] = []
+    A_frobenius_arr: List[float] = []
+    A_max_abs_arr: List[float] = []
+    A_min_nonzero_arr: List[float] = []
+    images_per_point_arr: List[float] = []
 
     for k in k_values:
         L = _paper_L(k)
@@ -203,6 +212,12 @@ def run_pipeline(
             kept_points_arr.append(0)
             fallback_arr.append(cutoff_fallback or sampling_meta.get("fallback_used", False))
             M_target_arr.append(M_target)
+            sigma_min_arr.append(np.nan)
+            sigma_max_arr.append(np.nan)
+            A_frobenius_arr.append(np.nan)
+            A_max_abs_arr.append(np.nan)
+            A_min_nonzero_arr.append(np.nan)
+            images_per_point_arr.append(np.nan)
             continue
 
         group_elements, geom_fallback = get_group_elements(manifold_name, max_word_length)
@@ -256,6 +271,12 @@ def run_pipeline(
             kept_points_arr.append(0)
             fallback_arr.append(fallback_used)
             M_target_arr.append(M_target)
+            sigma_min_arr.append(np.nan)
+            sigma_max_arr.append(np.nan)
+            A_frobenius_arr.append(np.nan)
+            A_max_abs_arr.append(np.nan)
+            A_min_nonzero_arr.append(np.nan)
+            images_per_point_arr.append(np.nan)
             continue
 
         t0 = time.perf_counter() if benchmark else None
@@ -270,11 +291,21 @@ def run_pipeline(
             self_check_issues.append(f"N mismatch for k={k}: expected {N}, got {N_check}")
 
         t0 = time.perf_counter() if benchmark else None
-        chi_sq, _ = solve_system_via_svd_numeric(A, n_smallest=MAX_RANKS)
+        normalize_rows = (chi2_mode == "legacy")
+        chi_sq, _, svd_diag = solve_system_via_svd_numeric(A, n_smallest=MAX_RANKS, normalize_rows=normalize_rows)
         if benchmark:
             timings.setdefault("svd", []).append(time.perf_counter() - t0)
         for idx in range(MAX_RANKS):
             chi2_ranks[idx].append(chi_sq[idx] if idx < len(chi_sq) else np.nan)
+        
+        # Collect diagnostics
+        sigma_min_arr.append(svd_diag['sigma_min'])
+        sigma_max_arr.append(svd_diag['sigma_max'])
+        A_frobenius_arr.append(float(np.linalg.norm(A, ord='fro')))
+        A_max_abs_arr.append(float(np.abs(A).max()) if A.size > 0 else np.nan)
+        A_nonzero = np.abs(A[A != 0])
+        A_min_nonzero_arr.append(float(A_nonzero.min()) if A_nonzero.size > 0 else np.nan)
+        images_per_point_arr.append(float(np.mean([len(imgs) for imgs in selected_points])))
 
         L_arr.append(L)
         rho_min_arr.append(rho_min)
@@ -307,6 +338,12 @@ def run_pipeline(
         "kept_points": np.array(kept_points_arr, dtype=int),
         "fallback_used": np.array(fallback_arr, dtype=bool),
         "M_target": np.array(M_target_arr, dtype=int),
+        "sigma_min": np.array(sigma_min_arr, dtype=float),
+        "sigma_max": np.array(sigma_max_arr, dtype=float),
+        "A_frobenius": np.array(A_frobenius_arr, dtype=float),
+        "A_max_abs": np.array(A_max_abs_arr, dtype=float),
+        "A_min_nonzero": np.array(A_min_nonzero_arr, dtype=float),
+        "images_per_point": np.array(images_per_point_arr, dtype=float),
     }
 
     spectrum_path = _save_spectrum(output_dir, k_values, chi2_ranks, meta_arrays)
@@ -399,6 +436,13 @@ def parse_args():
         action="store_true",
         help="Use scalar Q_k_lm implementation instead of vectorized version for matrix assembly",
     )
+    parser.add_argument(
+        "--chi2-mode",
+        type=str,
+        choices=["paper", "legacy"],
+        default="paper",
+        help="Chi-squared computation mode: 'paper' (default, no row normalization) or 'legacy' (with row normalization)",
+    )
     return parser.parse_args()
 
 
@@ -476,6 +520,7 @@ def main():
         eigen_threshold=args.eigen_threshold,
         benchmark=args.benchmark,
         use_scalar_q=args.use_scalar_q,
+        chi2_mode=args.chi2_mode,
     )
     if args.self_check_strict and not result["report"]["ok"]:
         raise SystemExit(1)

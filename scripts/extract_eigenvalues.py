@@ -1,5 +1,14 @@
 import argparse
+import sys
 from pathlib import Path
+
+# Support both direct execution and module-style execution
+if __name__ == "__main__" and __package__ is None:
+    # Add parent directory to path for direct script execution
+    script_dir = Path(__file__).resolve().parent
+    repo_root = script_dir.parent
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
 
 from utils.eigenvalues import extract_eigenvalues_from_spectrum
 

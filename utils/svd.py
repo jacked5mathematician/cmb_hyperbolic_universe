@@ -10,18 +10,29 @@ import time
 from utils.sys_generation import construct_numeric_matrix
 
 # Function to solve the system using SVD and compute chi^2, with timing
-def solve_system_via_svd_numeric(A, n_smallest: int = 3):
+def solve_system_via_svd_numeric(A, n_smallest: int = 3, normalize_rows: bool = False):
     """
     Compute the n_smallest singular values (and corresponding right singular vectors).
+    
+    Args:
+        A: Constraint matrix
+        n_smallest: Number of smallest singular values to return
+        normalize_rows: If True, apply row L2 normalization (legacy mode).
+                       If False (default), use paper-faithful mode without normalization.
+    
     The default keeps backward compatibility with the previous top-3 reporting.
+    Paper mode (normalize_rows=False) computes chi² = σ² directly from SVD as in equation 2.7.
+    Legacy mode (normalize_rows=True) applies row normalization before SVD.
     """
     start_time = time.time()  # Start timing
 
-    # Row L2 normalization to reduce dominance of any single block
     A = construct_numeric_matrix(A)
-    row_norms = np.linalg.norm(A, axis=1, keepdims=True)
-    row_norms[row_norms == 0] = 1.0
-    A = A / row_norms
+    
+    if normalize_rows:
+        # Legacy: Row L2 normalization to reduce dominance of any single block
+        row_norms = np.linalg.norm(A, axis=1, keepdims=True)
+        row_norms[row_norms == 0] = 1.0
+        A = A / row_norms
 
     # Perform Singular Value Decomposition
     # Left singular vectors are not needed; we still request full SVD to retain Vt
@@ -35,8 +46,15 @@ def solve_system_via_svd_numeric(A, n_smallest: int = 3):
 
     chi_squared = smallest_sigma ** 2
 
+    # Compute diagnostics
+    diagnostics = {
+        'sigma_min': float(s.min()) if len(s) > 0 else np.nan,
+        'sigma_max': float(s.max()) if len(s) > 0 else np.nan,
+        'all_singular_values': s.tolist(),
+    }
+
     end_time = time.time()  # End timing
-    return chi_squared.tolist(), vectors
+    return chi_squared.tolist(), vectors, diagnostics
 
 import matplotlib.pyplot as plt
 from datetime import datetime
