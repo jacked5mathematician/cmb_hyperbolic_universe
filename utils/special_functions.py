@@ -13,6 +13,8 @@ epsilon = 1e-8  # Small number to avoid division by zero
 mp.dps = 50  # Set decimal precision for mpmath
 
 # Instrumentation counters for profiling
+# NOTE: Not thread-safe. Assumes single-threaded execution (main pipeline is single-threaded).
+# If multi-threading is added, wrap counter updates with threading.Lock.
 _call_counters = {
     'phi_calls': 0,
     'phi_cache_hits': 0,

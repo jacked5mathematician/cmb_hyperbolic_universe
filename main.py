@@ -385,21 +385,22 @@ def run_pipeline(
         cache_stats = get_cache_stats()
         timing_summary['cache_stats'] = cache_stats
         
-        # Calculate hit rates
+        # Calculate hit rates (avoiding division by zero)
+        phi_hit_rate = cache_stats['phi_cache_hits'] / max(cache_stats['phi_calls'], 1)
+        y_lm_hit_rate = cache_stats['y_lm_cache_hits'] / max(cache_stats['y_lm_calls'], 1)
+        
         if cache_stats['phi_calls'] > 0:
-            timing_summary['cache_stats']['phi_hit_rate'] = cache_stats['phi_cache_hits'] / cache_stats['phi_calls']
+            timing_summary['cache_stats']['phi_hit_rate'] = phi_hit_rate
         if cache_stats['y_lm_calls'] > 0:
-            timing_summary['cache_stats']['y_lm_hit_rate'] = cache_stats['y_lm_cache_hits'] / cache_stats['y_lm_calls']
+            timing_summary['cache_stats']['y_lm_hit_rate'] = y_lm_hit_rate
         
         timing_path = output_dir / "timings.json"
         with open(timing_path, "w") as f:
             json.dump(timing_summary, f, indent=2)
         LOGGER.info("Wrote benchmark timings to %s", timing_path)
         LOGGER.info("Cache stats: Phi calls=%d (hit rate=%.2f%%), Y_lm calls=%d (hit rate=%.2f%%), legenp calls=%d",
-                    cache_stats['phi_calls'],
-                    100.0 * cache_stats['phi_cache_hits'] / max(cache_stats['phi_calls'], 1),
-                    cache_stats['y_lm_calls'],
-                    100.0 * cache_stats['y_lm_cache_hits'] / max(cache_stats['y_lm_calls'], 1),
+                    cache_stats['phi_calls'], 100.0 * phi_hit_rate,
+                    cache_stats['y_lm_calls'], 100.0 * y_lm_hit_rate,
                     cache_stats['legenp_calls'])
 
     result = {
