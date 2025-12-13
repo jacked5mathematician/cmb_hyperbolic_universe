@@ -44,6 +44,7 @@ python main.py \
     --k-min 1.0 --k-max 10.0 --num-k 400 \
     --n-points 60 --word-depth 3 \
     --chi2-mode paper \
+    --chi2-definition ratio \
     --require-snappy \
     --benchmark \
     --no-plot --no-eigenvalues \
@@ -51,12 +52,40 @@ python main.py \
 
 # Combine results after all chunks complete
 python scripts/combine_spectra.py --input-dir results
+
+# Compare chi-squared definitions
+python scripts/plot_chi2_definitions.py \
+    --spectrum results/spectrum.npz \
+    --output results/chi2_comparison.png \
+    --all-ranks
 ```
 
 **New flags for HPC**:
 - `--no-plot`: Skip plotting in array jobs (combine step will plot)
 - `--no-eigenvalues`: Skip eigenvalue extraction in array jobs
 - `--benchmark`: Write detailed timing statistics
+
+## Chi-Squared Definitions
+
+The pipeline supports multiple chi-squared definitions via `--chi2-definition`:
+
+- `raw_residual` (default): χ² = σ² (direct from SVD)
+- `per_row`: χ² = σ²/M (average per constraint)
+- `ratio`: χ² = (σ_min/σ_max)² (condition number, **recommended**)
+- `frobenius`: χ² = σ²/||A||_F² (relative to total matrix norm)
+
+The `ratio` definition is recommended as it likely matches the paper's Figure 1, producing O(1) values instead of ~1e-8.
+
+For detailed explanation, see `docs/chi2_definitions.md`.
+
+```bash
+# Run with recommended ratio definition
+python main.py --manifold "m003(-2,3)" \
+    --k-min 1.0 --k-max 10.0 --num-k 100 \
+    --n-points 20 \
+    --chi2-definition ratio \
+    --output-dir results
+```
 
 See `docs/perf.md` for HPC recommendations and `docs/algorithm.md` for detailed usage instructions.
 

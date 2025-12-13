@@ -10,7 +10,7 @@ import time
 from utils.sys_generation import construct_numeric_matrix
 
 # Function to solve the system using SVD and compute chi^2, with timing
-def solve_system_via_svd_numeric(A, n_smallest: int = 3, normalize_rows: bool = False):
+def solve_system_via_svd_numeric(A, n_smallest: int = 3, normalize_rows: bool = False, chi2_definition: str = 'raw_residual'):
     """
     Compute the n_smallest singular values (and corresponding right singular vectors).
     
@@ -19,6 +19,11 @@ def solve_system_via_svd_numeric(A, n_smallest: int = 3, normalize_rows: bool = 
         n_smallest: Number of smallest singular values to return
         normalize_rows: If True, apply row L2 normalization (legacy mode).
                        If False (default), use paper-faithful mode without normalization.
+        chi2_definition: Chi-squared definition to use. Options:
+                        'raw_residual': ||A·a||² (default)
+                        'per_row': ||A·a||² / M
+                        'ratio': (σ_min/σ_max)²
+                        'frobenius': ||A·a||² / ||A||_F²
     
     The default keeps backward compatibility with the previous top-3 reporting.
     Paper mode (normalize_rows=False) computes chi² = σ² directly from SVD as in equation 2.7.
@@ -44,7 +49,9 @@ def solve_system_via_svd_numeric(A, n_smallest: int = 3, normalize_rows: bool = 
     smallest_sigma = s[order[:take]]
     vectors = Vt[order[:take]]
 
-    chi_squared = smallest_sigma ** 2
+    # Compute chi-squared using the specified definition
+    from utils.chi2 import compute_chi2
+    chi_squared = compute_chi2(A, s, Vt, definition=chi2_definition, n_smallest=n_smallest)
 
     # Compute diagnostics
     diagnostics = {
