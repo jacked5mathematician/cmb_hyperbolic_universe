@@ -8,6 +8,8 @@ import numpy as np
 
 from .conventions import q_squared
 
+MULTIPLICITY_TOL = 1.1
+
 
 def _local_minima(values: Sequence[float]) -> List[int]:
     mins: List[int] = []
@@ -65,7 +67,7 @@ def extract_eigenvalues_from_spectrum(
         k_refined, chi_refined = _refine_minimum(k_values, chi1, idx) if refine else (float(k_values[idx]), chi_val)
         multiplicity_hint = 0
         for curve in rank_curves:
-            if idx < len(curve) and np.isfinite(curve[idx]) and curve[idx] <= chi_val * 1.1:
+            if idx < len(curve) and np.isfinite(curve[idx]) and curve[idx] <= chi_val * MULTIPLICITY_TOL:
                 multiplicity_hint += 1
         rows.append((k_refined, q_squared(k_refined), float(chi_refined), multiplicity_hint))
 

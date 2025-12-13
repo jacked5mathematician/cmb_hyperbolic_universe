@@ -14,10 +14,10 @@ from .transformations import (
     project_to_klein,
 )
 
+PointSamples = Tuple[np.ndarray, np.ndarray]
 LOGGER = logging.getLogger(__name__)
 DEFAULT_FALLBACK_RADIUS = 0.85  # Conservative radius to keep well inside the Poincaré ball
 MAX_ATTEMPT_MULTIPLIER = 50  # Try up to this multiple of n_points before falling back
-PointSamples = Tuple[np.ndarray, np.ndarray]
 
 
 def _sample_in_ball(n_points: int, rng: np.random.Generator, radius: float = DEFAULT_FALLBACK_RADIUS) -> np.ndarray:

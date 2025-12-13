@@ -8,10 +8,10 @@ import numpy as np
 
 from .transformations import apply_so31_action, project_to_klein, klein_to_pseudo_spherical
 
+GhostImages = List[List[Tuple[float, float, float]]]
 LOGGER = logging.getLogger(__name__)
 MATRIX_ROUND_DECIMALS = 8  # Precision used for deduplicating group elements
 MAX_IMAGES_DEFAULT = 200
-GhostImages = List[List[Tuple[float, float, float]]]
 
 
 def _load_generators(manifold_name: str) -> List[np.ndarray]:

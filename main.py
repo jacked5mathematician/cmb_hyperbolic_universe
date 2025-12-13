@@ -1,12 +1,14 @@
 import argparse
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Dict, List, Tuple
 
 import matplotlib
 
-matplotlib.use("Agg")
+if "MPLBACKEND" not in os.environ:
+    matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -270,7 +272,7 @@ def run_pipeline(
         try:
             from utils.eigenvalues import extract_eigenvalues_from_spectrum
         except ImportError:
-            # Lazy import to avoid circularity during tests if module missing
+            # Eigenvalue extraction is optional; skip if the helper is unavailable
             extract_eigenvalues_from_spectrum = None
         if extract_eigenvalues_from_spectrum is not None:
             eigen_path = extract_eigenvalues_from_spectrum(
