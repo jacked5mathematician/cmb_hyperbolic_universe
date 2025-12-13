@@ -23,6 +23,8 @@ from .special_functions import (
     Q_k_lm_vectorized,
     clear_special_function_caches,
     get_cache_stats,
+    get_call_counters,
+    reset_call_counters,
 )
 
 # Legacy/optional imports (for backward compatibility with old scripts in legacy/)

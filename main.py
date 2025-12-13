@@ -358,6 +358,8 @@ def run_pipeline(
     
     # Write timing information if in benchmark mode
     if benchmark and timings:
+        from utils.special_functions import get_cache_stats
+        
         timing_summary = {}
         for phase, times in timings.items():
             if times:
@@ -368,10 +370,27 @@ def run_pipeline(
                     "min": float(np.min(times)),
                     "max": float(np.max(times)),
                 }
+        
+        # Add cache statistics
+        cache_stats = get_cache_stats()
+        timing_summary['cache_stats'] = cache_stats
+        
+        # Calculate hit rates
+        if cache_stats['phi_calls'] > 0:
+            timing_summary['cache_stats']['phi_hit_rate'] = cache_stats['phi_cache_hits'] / cache_stats['phi_calls']
+        if cache_stats['y_lm_calls'] > 0:
+            timing_summary['cache_stats']['y_lm_hit_rate'] = cache_stats['y_lm_cache_hits'] / cache_stats['y_lm_calls']
+        
         timing_path = output_dir / "timings.json"
         with open(timing_path, "w") as f:
             json.dump(timing_summary, f, indent=2)
         LOGGER.info("Wrote benchmark timings to %s", timing_path)
+        LOGGER.info("Cache stats: Phi calls=%d (hit rate=%.2f%%), Y_lm calls=%d (hit rate=%.2f%%), legenp calls=%d",
+                    cache_stats['phi_calls'],
+                    100.0 * cache_stats['phi_cache_hits'] / max(cache_stats['phi_calls'], 1),
+                    cache_stats['y_lm_calls'],
+                    100.0 * cache_stats['y_lm_cache_hits'] / max(cache_stats['y_lm_calls'], 1),
+                    cache_stats['legenp_calls'])
 
     result = {
         "spectrum_path": spectrum_path,
@@ -444,13 +463,16 @@ def parse_args():
         default="paper",
         help="Chi-squared computation mode: 'paper' (default, no row normalization) or 'legacy' (with row normalization)",
     )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Enable cProfile profiling and write profile.prof to output directory",
+    )
     return parser.parse_args()
 
 
-def main():
-    args = parse_args()
-
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+def _run_main_logic(args):
+    """Main logic separated for profiling support."""
     output_dir = Path(args.output_dir)
     
     # Check SnapPy availability if required
@@ -525,6 +547,44 @@ def main():
     )
     if args.self_check_strict and not result["report"]["ok"]:
         raise SystemExit(1)
+    return result
+
+
+def main():
+    args = parse_args()
+    
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    
+    if args.profile:
+        import cProfile
+        import pstats
+        from pathlib import Path
+        
+        output_dir = Path(args.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        profile_path = output_dir / "profile.prof"
+        
+        LOGGER.info("Profiling enabled, output will be saved to %s", profile_path)
+        profiler = cProfile.Profile()
+        profiler.enable()
+        
+        try:
+            result = _run_main_logic(args)
+        finally:
+            profiler.disable()
+            profiler.dump_stats(str(profile_path))
+            LOGGER.info("Profile saved to %s", profile_path)
+            
+            # Also print top 20 functions by cumulative time
+            stats = pstats.Stats(profiler)
+            stats.strip_dirs()
+            stats.sort_stats('cumulative')
+            LOGGER.info("Top 20 functions by cumulative time:")
+            stats.print_stats(20)
+    else:
+        result = _run_main_logic(args)
+    
+    return result
 
 
 if __name__ == "__main__":

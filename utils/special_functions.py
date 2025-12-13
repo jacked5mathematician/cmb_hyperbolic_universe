@@ -12,6 +12,27 @@ normalization_constant_cache = {}
 epsilon = 1e-8  # Small number to avoid division by zero
 mp.dps = 50  # Set decimal precision for mpmath
 
+# Instrumentation counters for profiling
+_call_counters = {
+    'phi_calls': 0,
+    'phi_cache_hits': 0,
+    'phi_cache_misses': 0,
+    'y_lm_calls': 0,
+    'y_lm_cache_hits': 0,
+    'y_lm_cache_misses': 0,
+    'legenp_calls': 0,
+}
+
+def get_call_counters():
+    """Return a copy of the call counters."""
+    return _call_counters.copy()
+
+def reset_call_counters():
+    """Reset all call counters to zero."""
+    global _call_counters
+    for key in _call_counters:
+        _call_counters[key] = 0
+
 # The Legendre function P^{-1/2-l}_{-1/2+i*nu}(cosh(chi))
 def legendre_P(alpha, beta, x):
         if x <= 1 + epsilon:
@@ -170,31 +191,55 @@ def clear_special_function_caches():
 
 def get_cache_stats():
     """Return statistics about cache usage."""
+    counters = get_call_counters()
     return {
         'phi_cache_size': len(phi_cache),
         'y_lm_cache_size': len(y_lm_cache),
         'rho_precision': RHO_CACHE_PRECISION,
         'angle_precision': ANGLE_CACHE_PRECISION,
+        'phi_calls': counters['phi_calls'],
+        'phi_cache_hits': counters['phi_cache_hits'],
+        'phi_cache_misses': counters['phi_cache_misses'],
+        'y_lm_calls': counters['y_lm_calls'],
+        'y_lm_cache_hits': counters['y_lm_cache_hits'],
+        'y_lm_cache_misses': counters['y_lm_cache_misses'],
+        'legenp_calls': counters['legenp_calls'],
     }
 
 def Phi_nu_l_cached(nu, l, chi):
     """Cached version of the normalized hyperspherical Bessel function Phi^nu_l(chi) for K = -1.
     Uses quantized rho for bounded cache."""
+    global _call_counters
+    _call_counters['phi_calls'] += 1
+    
     if not USE_CACHE:
+        _call_counters['phi_cache_misses'] += 1
         return Phi_nu_l(nu, l, chi)
+    
     key = _make_cache_key(nu, l, chi, precisions=[None, None, RHO_CACHE_PRECISION])
     if key not in phi_cache:
+        _call_counters['phi_cache_misses'] += 1
         phi_cache[key] = Phi_nu_l(nu, l, chi)
+    else:
+        _call_counters['phi_cache_hits'] += 1
     return phi_cache[key]
 
 def Y_lm_real_cached(l, m, theta, phi):
     """Cached version of the real-valued spherical harmonics function.
     Uses quantized angles for bounded cache."""
+    global _call_counters
+    _call_counters['y_lm_calls'] += 1
+    
     if not USE_CACHE:
+        _call_counters['y_lm_cache_misses'] += 1
         return Y_lm_real(l, m, theta, phi)
+    
     key = _make_cache_key(l, m, theta, phi, precisions=[None, None, ANGLE_CACHE_PRECISION, ANGLE_CACHE_PRECISION])
     if key not in y_lm_cache:
+        _call_counters['y_lm_cache_misses'] += 1
         y_lm_cache[key] = Y_lm_real(l, m, theta, phi)
+    else:
+        _call_counters['y_lm_cache_hits'] += 1
     return y_lm_cache[key]
 
 # Full eigenfunction Q_{k,l,m}(rho, theta, phi) using normalized Phi_nu_l
@@ -262,6 +307,8 @@ def Phi_nu_l_vectorized(nu, l, rho_array):
     # Vectorize the computation of Legendre function and take the real part to
     # match the scalar implementation.
     def _legendre_real(xi):
+        global _call_counters
+        _call_counters['legenp_calls'] += 1
         val = mp.legenp(alpha, beta, xi)
         return float(mp.re(val))
 
