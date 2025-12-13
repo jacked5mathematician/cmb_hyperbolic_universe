@@ -8,6 +8,7 @@ import numpy as np
 import tqdm
 import time
 from utils.sys_generation import construct_numeric_matrix
+from utils.chi2 import compute_chi2
 
 # Function to solve the system using SVD and compute chi^2, with timing
 def solve_system_via_svd_numeric(A, n_smallest: int = 3, normalize_rows: bool = False, chi2_definition: str = 'raw_residual'):
@@ -50,7 +51,6 @@ def solve_system_via_svd_numeric(A, n_smallest: int = 3, normalize_rows: bool = 
     vectors = Vt[order[:take]]
 
     # Compute chi-squared using the specified definition
-    from utils.chi2 import compute_chi2
     chi_squared = compute_chi2(A, s, Vt, definition=chi2_definition, n_smallest=n_smallest)
 
     # Compute diagnostics

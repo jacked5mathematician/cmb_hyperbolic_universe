@@ -78,8 +78,9 @@ def recompute_chi2_with_definitions(
     
     # Compute ratio if sigma_min and sigma_max are available
     if sigma_min is not None and sigma_max is not None:
-        # For rank 1, chi2_raw = sigma_min^2, so we can recover sigma_min
-        # and compute the ratio definition
+        # Note: This assumes chi2_raw = sigma^2 for the specific rank being analyzed.
+        # For rank 1, this is sigma_min^2. For higher ranks, this is the k-th smallest sigma.
+        # sigma_max is always the largest singular value across all ranks.
         sigma_for_rank = np.sqrt(chi2_raw)
         with np.errstate(divide='ignore', invalid='ignore'):
             results['ratio'] = (sigma_for_rank / sigma_max) ** 2

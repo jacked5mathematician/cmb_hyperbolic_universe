@@ -23,12 +23,15 @@ def compute_chi2_raw_residual(
     Args:
         A: Constraint matrix (M x N)
         singular_values: All singular values from SVD
-        vectors: Right singular vectors (Vt from SVD)
+        vectors: Right singular vectors (Vt from SVD) - unused, kept for API consistency
         n_smallest: Number of smallest values to return
     
     Returns:
         Array of chi^2 values for the n_smallest eigenmodes
     """
+    if len(singular_values) == 0:
+        return np.array([np.nan] * n_smallest)
+    
     order = np.argsort(singular_values)
     take = min(n_smallest, len(singular_values))
     smallest_sigma = singular_values[order[:take]]
@@ -50,12 +53,15 @@ def compute_chi2_per_row(
     Args:
         A: Constraint matrix (M x N)
         singular_values: All singular values from SVD
-        vectors: Right singular vectors (Vt from SVD)
+        vectors: Right singular vectors (Vt from SVD) - unused, kept for API consistency
         n_smallest: Number of smallest values to return
     
     Returns:
         Array of chi^2 values for the n_smallest eigenmodes
     """
+    if len(singular_values) == 0:
+        return np.array([np.nan] * n_smallest)
+    
     M = A.shape[0]
     order = np.argsort(singular_values)
     take = min(n_smallest, len(singular_values))
@@ -79,7 +85,7 @@ def compute_chi2_ratio(
     Args:
         A: Constraint matrix (M x N)
         singular_values: All singular values from SVD
-        vectors: Right singular vectors (Vt from SVD)
+        vectors: Right singular vectors (Vt from SVD) - unused, kept for API consistency
         n_smallest: Number of smallest values to return
     
     Returns:
@@ -115,7 +121,7 @@ def compute_chi2_frobenius(
     Args:
         A: Constraint matrix (M x N)
         singular_values: All singular values from SVD
-        vectors: Right singular vectors (Vt from SVD)
+        vectors: Right singular vectors (Vt from SVD) - unused, kept for API consistency
         n_smallest: Number of smallest values to return
     
     Returns:

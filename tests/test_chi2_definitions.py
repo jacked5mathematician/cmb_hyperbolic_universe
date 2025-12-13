@@ -39,8 +39,8 @@ def test_chi2_raw_residual():
     chi2 = compute_chi2_raw_residual(A, s, Vt, n_smallest=3)
     
     # Expected: squared smallest singular values
-    # Singular values are [3.0, 2.0, 1.118...]
-    # Smallest is 1.118..., so chi^2 should be ~1.25
+    # For this matrix, singular values are [3.0, 2.0, sqrt(1.25)] ≈ [3.0, 2.0, 1.118]
+    # Smallest is 1.118..., so chi^2 should be 1.118^2 ≈ 1.25
     assert len(chi2) == 3
     assert chi2[0] < chi2[1] < chi2[2]
     assert np.allclose(chi2[0], 1.118**2, rtol=1e-2)
