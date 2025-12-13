@@ -1,73 +1,44 @@
-from joblib import Parallel, delayed
 import numpy as np
-from utils.special_functions import parallel_Q_k_lm_compute, Q_k_lm_vectorized
-import mpmath as mp
 
-def compute_column(l, m, k_value, points_images, q_values):
-    """Vectorized compute_column without explicit loops over image pairs."""
-    column = []
+from utils.special_functions import Q_k_lm
 
-    for images in points_images:
-        n_j = len(images)
-        if n_j < 2:
-            continue  # No pairs to process
-
-        # Convert images to numpy arrays
-        images_array = np.array(images)  # Shape (n_j, 3)
-
-        # Fetch Q_values for all images in this set
-        Q_values_images = np.array([q_values[tuple(img)] for img in images])  # Shape (n_j,)
-
-        # Create indices for pairs where alpha < beta
-        alpha_indices, beta_indices = np.triu_indices(n_j, k=1)
-
-        Q_alpha = Q_values_images[alpha_indices]
-        Q_beta = Q_values_images[beta_indices]
-
-        differences = Q_alpha - Q_beta  # This is a vector of differences
-
-        column.extend(differences)
-
-    return column
 
 def generate_matrix_system(points_images, L, k_value):
     """
-    Generate the matrix system using the provided points and their images.
+    Build matrix A(k) where columns correspond to (l, m) with 0<=l<=L and rows
+    correspond to unordered pairs of images for each base point.
 
-    Parameters:
-    - points_images: List of tuples where each tuple contains (original_point, [image_points])
-    - L: Max angular momentum
-    - k_value: Current k value
-
-    Returns:
-    - M: Number of rows in the matrix
-    - N: Number of columns in the matrix
-    - A: The constructed matrix as a numpy array
+    points_images: List[List[(rho, theta, phi)]]
     """
-    k_value = float(k_value)
     lm_pairs = [(l, m) for l in range(L + 1) for m in range(-l, l + 1)]
-    N = len(lm_pairs)  # Number of columns
-    A_rows = []
-
-    for original_point, images in points_images:
+    N = (L + 1) ** 2
+    rows = []
+    for images in points_images:
         n_j = len(images)
-        
         if n_j < 2:
             continue
+        for alpha in range(n_j):
+            for beta in range(alpha + 1, n_j):
+                rho_a, th_a, ph_a = images[alpha]
+                rho_b, th_b, ph_b = images[beta]
+                row = [
+                    Q_k_lm(k_value, l, m, rho_a, th_a, ph_a)
+                    - Q_k_lm(k_value, l, m, rho_b, th_b, ph_b)
+                    for l, m in lm_pairs
+                ]
+                rows.append(row)
+    A = np.array(rows, dtype=np.complex128)
+    M_expected = sum(len(imgs) * (len(imgs) - 1) // 2 for imgs in points_images)
+    assert A.shape[0] == M_expected, f"M mismatch: expected {M_expected}, got {A.shape[0]}"
+    assert A.shape[1] == N, f"N mismatch: expected {N}, got {A.shape[1]}"
+    return A.shape[0], A.shape[1], A
 
-        images_array = np.array(images)
-        alpha_indices, beta_indices = np.triu_indices(n_j, k=1)
 
-        Q_values = Q_k_lm_vectorized(k_value, lm_pairs, images_array)
-        Q_alpha = Q_values[alpha_indices]
-        Q_beta = Q_values[beta_indices]
-        differences = Q_alpha - Q_beta
-
-        A_rows.extend(differences)
-
-    A = np.array(A_rows, dtype=np.complex128)
-    M = len(A)
-    return M, N, A
-
-def construct_numeric_matrix():
-    return None
+def construct_numeric_matrix(matrix_system, k_value=None):
+    """
+    Legacy compatibility helper. Converts list-like systems to numpy arrays and
+    returns pre-existing numeric arrays unchanged.
+    """
+    if isinstance(matrix_system, np.ndarray):
+        return matrix_system
+    return np.array(matrix_system, dtype=np.complex128)

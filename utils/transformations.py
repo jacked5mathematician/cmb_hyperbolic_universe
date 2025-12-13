@@ -106,17 +106,14 @@ def poincare_distance(point1, point2):
     # Compute Euclidean norms of the points
     norm1_squared = sum(coord**2 for coord in point1)
     norm2_squared = sum(coord**2 for coord in point2)
-    
+
     if norm1_squared >= 1 or norm2_squared >= 1:
         raise ValueError("One or both points are outside the Poincaré ball (norm >= 1).")
-    
-    # Compute Euclidean distance between the points
-    euclidean_distance = np.sqrt(sum((p1 - p2)**2 for p1, p2 in zip(point1, point2)))
-    
-    # Compute hyperbolic distance using the Poincaré metric
-    numerator = 2 * euclidean_distance
+
+    diff_squared = sum((p1 - p2) ** 2 for p1, p2 in zip(point1, point2))
+
     denominator = (1 - norm1_squared) * (1 - norm2_squared)
-    cosh_dist = 1 + numerator / denominator
-    hyperbolic_distance = np.arccosh(cosh_dist)
-    
+    cosh_arg = 1 + (2 * diff_squared) / denominator
+    hyperbolic_distance = np.arccosh(cosh_arg)
+
     return hyperbolic_distance

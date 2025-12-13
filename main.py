@@ -1,256 +1,136 @@
-import numpy as np
-import pickle  # Import pickle to load .pkl files
-from mpi4py import MPI
-from utils import (
-    build_dirichlet_domain,
-    generate_random_points_in_domain,
-    filter_points_in_domain,
-    # generate_transformed_points,  # Remove this import
-    convert_to_points_images,
-    solve_system_via_svd_numeric,
-    plot_chi_squared_spectrum,
-    compute_target_M,
-    filter_points_for_overconstraint,
-    determine_tiling_radius,
-    construct_numeric_matrix,
-    poincare_to_pseudo_spherical,  # Import the transformation function
-)
-from tqdm import tqdm  # Import for progress bars
-from joblib import Parallel, delayed
-import cProfile
-import pstats
-import io
-import time
+import argparse
+import json
 import logging
 import os
-import sys
-import json
-from utils.sys_generation import generate_matrix_system
+from pathlib import Path
 
-# Profiler function to wrap any function you want to profile
-def profile_function(func, *args, **kwargs):
-    pr = cProfile.Profile()
-    pr.enable()  # Start profiling
-    result = func(*args, **kwargs)
-    pr.disable()  # Stop profiling
+import numpy as np
 
-    # Create a string buffer to hold the profile results
-    s = io.StringIO()
+from utils import (
+    compute_rho_cutoffs,
+    enumerate_ghost_images,
+    generate_matrix_system,
+    sample_points_in_dirichlet_domain,
+    solve_system_via_svd_numeric,
+)
 
-    # Create a Stats object
-    ps = pstats.Stats(pr, stream=s)
 
-    # Sort and print by different criteria
-    sort_criteria = ['cumulative', 'time', 'calls']
-    for criteria in sort_criteria:
-        s.write(f"\n---- Profile sorted by {criteria} ----\n")
-        ps.sort_stats(criteria).print_stats(10)  # Print top 10 functions
+LOGGER = logging.getLogger("pipeline")
 
-    # Save profiling results to a file for later inspection
-    with open("profiling_results.txt", "w") as f:
-        f.write(s.getvalue())
 
-    # Print the profile statistics to the console
-    print(s.getvalue())  # Print the contents of the buffer to the console
+def _default_L(k: float) -> int:
+    return max(1, int(round(k)))
 
-    return result
 
-def process_k_values_chunk(
-    chunk_index, 
-    k_values_chunk, 
-    data_with_distances,  # Adjusted to receive data_with_distances
-    min_images, 
-    tolerance, 
-    manifold_name,   
-    num_best_to_compute=5
-):
-    # Set up logging
-    output_dir = 'output_values'
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Use chunk_index for unique log files
-    logger = logging.getLogger(f"Chunk_{chunk_index}")
-    logger.setLevel(logging.INFO)
-    log_file_path = os.path.join(output_dir, f"chunk_{chunk_index}.log")
-    handler = logging.FileHandler(log_file_path)
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    
-    # Set up directory for matrices
-    matrices_dir = 'output_matrices'
-    os.makedirs(matrices_dir, exist_ok=True)
-    
-    chi_squared_values_chunk = [[] for _ in range(num_best_to_compute)]
-    k_values_processed = []
+def _default_l_min(L: int) -> int:
+    return max(0, min(2, L))
 
-    # Initialize variables per chunk
-    previous_c_value = None
-    classified_transformed_points = None
-    selected_points = None
-    selected_transformed_points = None
-    points_images = None
 
-    # Process each k_value sequentially
-    for k_value in k_values_chunk:
-        timings = {}
-        k_start_time = time.time()
-        
-        # Compute new c and L based on the current k_value
-        c_start_time = time.time()
-        new_c_value = 10 + round(100 / k_value)
-        new_L_value = 10 + round(k_value)
-        timings['compute_c_L'] = time.time() - c_start_time
+def run_pipeline(manifold_name: str, k_values: np.ndarray, n_points: int, seed: int,
+                 small_test: bool, dry_run: bool, output_dir: Path) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Only recompute if c_value has changed
-        if new_c_value != previous_c_value:
-            # Compute tiling radius
-            tiling_start_time = time.time()
-            result = determine_tiling_radius(
-                data_with_distances, new_L_value, new_c_value, min_images, tolerance
+    LOGGER.info("Sampling %s base points for manifold %s", n_points, manifold_name)
+    base_points, base_points_pseudo = sample_points_in_dirichlet_domain(
+        manifold_name, n_points=n_points, seed=seed
+    )
+    LOGGER.info("Sampled %s base points (mean rho=%.3f)", len(base_points_pseudo), base_points_pseudo[:, 0].mean())
+
+    summary = []
+    for k in k_values:
+        L = _default_L(k)
+        l_min = _default_l_min(L)
+        c_val = L  # TODO: replace with paper-specific c(k) heuristic once available
+        rho_min, rho_max = compute_rho_cutoffs(k, L, l_min)
+        LOGGER.info(
+            "k=%.3f -> L=%s c=%s l_min=%s rho_min=%.3f rho_max=%.3f",
+            k, L, c_val, l_min, rho_min, rho_max,
+        )
+
+        if dry_run:
+            summary.append(
+                {"k": float(k), "L": L, "c": c_val, "l_min": l_min, "rho_min": rho_min, "rho_max": rho_max}
             )
-            timings['determine_tiling_radius'] = time.time() - tiling_start_time
-
-            if result is None:
-                logger.error(f"Error: Could not determine tiling radius for k = {k_value}.")
-                continue
-
-            classified_transformed_points, rho_min, rho_max, valid_points = result
-
-            # Compute M and N
-            compute_M_start_time = time.time()
-            M_desired, N = compute_target_M(new_L_value, new_c_value)
-            timings['compute_target_M'] = time.time() - compute_M_start_time
-
-            # Filter points
-            filter_points_start_time = time.time()
-            selected_points, selected_transformed_points, points_images = filter_points_for_overconstraint(
-                classified_transformed_points, data_with_distances, M_desired
-            )
-            timings['filter_points_for_overconstraint'] = time.time() - filter_points_start_time
-
-            previous_c_value = new_c_value
-
-        valid_points = len(selected_points)
-
-        # Generate matrix system
-        matrix_system_start_time = time.time()
-        _, _, A = generate_matrix_system(points_images, new_L_value, k_value)
-        timings['generate_matrix_system'] = time.time() - matrix_system_start_time
-
-        if A.size == 0:
-            logger.error(f"Error: matrix A is empty for k = {k_value}")
             continue
 
-        # Print matrix shape and save
-        logger.info(f"Generated matrix A with shape: {A.shape}")
-        matrix_filename = os.path.join(matrices_dir, f'matrix_chunk_{chunk_index}_k_{k_value:.3f}.npy')
-        np.save(matrix_filename, A)
-        logger.info(f"Matrix A saved to {matrix_filename}")
+        points_images = enumerate_ghost_images(
+            manifold_name,
+            base_points,
+            rho_min=rho_min,
+            rho_max=rho_max,
+            min_images=10,
+            max_word_length=2 if small_test else 6,
+        )
+        kept = len(points_images)
+        LOGGER.info("Retained %s/%s base points after ghost enumeration", kept, len(base_points))
 
-        # Compute SVD and chi-squared values
-        chi_squared_values, singular_vectors = solve_system_via_svd_numeric(A)
+        if not points_images:
+            LOGGER.warning("No points retained for k=%.3f; skipping.", k)
+            continue
 
-        # Log the chi-squared values
-        logger.info("Computed chi-squared values:")
-        for idx, chi_squared in enumerate(chi_squared_values):
-            logger.info(f"Singular Vector {idx + 1}: chi² = {chi_squared}")
+        M, N, A = generate_matrix_system(points_images, L, k)
+        LOGGER.info("Matrix A shape: %s x %s (M=%s N=%s)", A.shape[0], A.shape[1], M, N)
 
-        # Store the top chi-squared values up to `num_best_to_compute`
-        for i in range(min(len(chi_squared_values), num_best_to_compute)):
-            chi_squared_values_chunk[i].append(chi_squared_values[i])
+        chi_sq, _ = solve_system_via_svd_numeric(A)
+        LOGGER.info("Smallest singular values^2 for k=%.3f: %s", k, chi_sq)
 
-        timings['total_time'] = time.time() - k_start_time
+        summary.append(
+            {
+                "k": float(k),
+                "L": L,
+                "c": c_val,
+                "l_min": l_min,
+                "rho_min": rho_min,
+                "rho_max": rho_max,
+                "M": M,
+                "N": N,
+                "chi2": chi_sq,
+                "kept_points": kept,
+            }
+        )
 
-        # Log timings and chi-squared values
-        logger.info(f"k = {k_value}: chi_squared_values = {chi_squared_values[:num_best_to_compute]}, timings = {timings}")
+    with open(output_dir / "summary.json", "w") as f:
+        json.dump(summary, f, indent=2)
+    LOGGER.info("Wrote summary for %s k values to %s", len(summary), output_dir / "summary.json")
 
-        k_values_processed.append(k_value)
-    
-    # Remove handler after processing
-    logger.removeHandler(handler)
-    handler.close()
 
-    # Save results to a file
-    output_file = os.path.join(output_dir, f"results_chunk_{chunk_index}.npz")
+def parse_args():
+    parser = argparse.ArgumentParser(description="Paper-faithful ghosts pipeline.")
+    parser.add_argument("--manifold", default="m003(-2,3)")
+    parser.add_argument("--k-min", type=float, default=1.0)
+    parser.add_argument("--k-max", type=float, default=2.0)
+    parser.add_argument("--num-k", type=int, default=3)
+    parser.add_argument("--n-points", type=int, default=20)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--small-test", action="store_true", help="Use small limits for quick runs.")
+    parser.add_argument("--dry-run", action="store_true", help="Compute configuration only.")
+    parser.add_argument("--output-dir", default="output_values")
+    return parser.parse_args()
 
-    # Prepare chi-squared data for saving
-    chi_squared_data = {f'chi_squared_rank_{i+1}': np.array(chi_squared_values_chunk[i]) for i in range(num_best_to_compute)}
-
-    # Save k_values and chi-squared data
-    np.savez(
-        output_file,
-        k_values=k_values_processed,
-        **chi_squared_data
-    )
-
-    logger.info(f"Results saved to {output_file}")
 
 def main():
-    # Get environment variables
-    node_index = int(os.environ.get('SLURM_PROCID', '0'))
-    num_nodes = int(os.environ.get('NUM_NODES', '1'))
-    chunks_per_node = int(os.environ.get('CHUNKS_PER_NODE', '1'))
-    num_jobs = int(os.environ.get('NUM_JOBS', '1'))  # Number of parallel jobs within each node
+    args = parse_args()
 
-    # Set threading environment variables if necessary
-    os.environ["OMP_NUM_THREADS"] = os.environ.get("OMP_NUM_THREADS", "1")
-    os.environ["MKL_NUM_THREADS"] = os.environ.get("MKL_NUM_THREADS", "1")
-    os.environ["OPENBLAS_NUM_THREADS"] = os.environ.get("OPENBLAS_NUM_THREADS", "1")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    output_dir = Path(args.output_dir)
 
-    manifold_name = 'm188(-1,1)'  # Example manifold name
-    min_images = 20               # Minimum number of images required per point
-    tolerance = 0.1               # Allow small deviations in rho
-    resolution = 400              # Resolution for the k values
-    k_values = np.linspace(1.0, 10.0, resolution)  # Range of k values
+    if args.small_test:
+        args.num_k = min(args.num_k, 2)
+        args.n_points = min(args.n_points, 6)
 
-    # Total number of chunks
-    total_chunks = num_nodes * chunks_per_node
+    k_values = np.linspace(args.k_min, args.k_max, args.num_k)
+    LOGGER.info("Running pipeline for k in [%s, %s] (%s samples)", args.k_min, args.k_max, args.num_k)
 
-    # Split k_values into chunks using round-robin
-    k_values_chunks = [[] for _ in range(total_chunks)]
-    for idx, k_value in enumerate(k_values):
-        chunk_idx = idx % total_chunks  # Round-robin assignment
-        k_values_chunks[chunk_idx].append(k_value)
-
-    # Assign chunks to this node
-    chunks_assigned = []
-    chunk_indices = []
-    for i in range(total_chunks):
-        if i % num_nodes == node_index:
-            chunks_assigned.append(k_values_chunks[i])
-            chunk_indices.append(i)
-
-    # Load transformed points data from the .pkl file
-    transformed_data_file = f'{manifold_name}_points_data.pkl'  # Update file name
-
-    if os.path.exists(transformed_data_file):
-        print(f"Loading transformed points data from {transformed_data_file}...")
-        with open(transformed_data_file, 'rb') as f:
-            data_with_distances = pickle.load(f)
-        print(f"Loaded transformed points data.")
-    else:
-        print(f"Error: {transformed_data_file} not found.")
-        return
-
-    # Process the assigned chunks in parallel
-    results = Parallel(n_jobs=num_jobs)(
-        delayed(process_k_values_chunk)(
-            chunk_index, k_values_chunk, data_with_distances,
-            min_images, tolerance, manifold_name,
-        ) for chunk_index, k_values_chunk in zip(chunk_indices, chunks_assigned)
+    run_pipeline(
+        manifold_name=args.manifold,
+        k_values=k_values,
+        n_points=args.n_points,
+        seed=args.seed,
+        small_test=args.small_test,
+        dry_run=args.dry_run,
+        output_dir=output_dir,
     )
 
-    config = {
-    "total_chunks": total_chunks, 
-    "resolution": resolution,
-    "manifold_name": manifold_name
-    }   
-
-    with open('output_values/config.json', 'w') as f:
-        json.dump(config, f)
 
 if __name__ == "__main__":
-    # Initialize logging at the beginning
-    logging.basicConfig(level=logging.INFO)
-    profile_function(main)
+    main()

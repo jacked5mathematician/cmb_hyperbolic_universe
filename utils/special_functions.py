@@ -9,14 +9,14 @@ from tqdm import tqdm
 # Cache for storing normalization constants
 normalization_constant_cache = {}
 
-epsilon = 1e-35  # Small number to avoid division by zero
+epsilon = 1e-8  # Small number to avoid division by zero
 mp.dps = 50  # Set decimal precision for mpmath
-normalization_constant_cache = {}
 
 # The Legendre function P^{-1/2-l}_{-1/2+i*nu}(cosh(chi))
 def legendre_P(alpha, beta, x):
-        #if x < 1 + epsilon:
-        #    x = 1 + epsilon
+        if x <= 1 + epsilon:
+            # Guard against division by zero when cosh(chi) ~ 1
+            x = 1 + 2 * epsilon
 
         prefactor = ((x + 1) / (x - 1))**(beta / 2)
         hyp_part = mp.hyp2f1(alpha + 1, -alpha, 1 - beta, (1 - x) / 2, maxprec=100000, maxterms=10000000)
@@ -28,6 +28,8 @@ def Phi_nu_l(nu, l, chi):
     """Compute the normalized hyperspherical Bessel function Phi^nu_l(chi) for K = -1."""
     nu = float(nu)
     chi = float(chi)
+    # Clamp chi away from zero to avoid singularities in sinh/Legendre evaluation
+    chi = max(chi, epsilon)
     l = int(l)
 
     # Compute N^nu_l as a product from n=1 to l of (nu^2 + n^2)
@@ -74,9 +76,9 @@ def Phi_nu_l_no_norm(nu, l, chi):
     
     # The Legendre function P^{-1/2-l}_{-1/2+i*nu}(cosh(chi))
     def legendre_P(alpha, beta, x):
-        #if x < 1 + epsilon:
-         #   x = 1 + epsilon
-        
+        if x <= 1 + epsilon:
+            x = 1 + 2 * epsilon
+
         prefactor = ((x + 1) / (x - 1))**(beta / 2)
         hyp_part = mp.hyp2f1(alpha + 1, -alpha, 1 - beta, (1 - x) / 2)
         return prefactor * hyp_part / mp.gamma(1 - beta)
