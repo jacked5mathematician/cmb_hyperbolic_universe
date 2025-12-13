@@ -26,6 +26,14 @@ where A is the constraint matrix and a is the solution vector from SVD.
 
 **Important**: The paper does NOT mention row normalization of the A matrix. Use `--chi2-mode paper` (default) for paper-faithful computation, or `--chi2-mode legacy` to preserve the old row normalization behavior.
 
+**Chi-squared definitions**: The pipeline supports multiple interpretations via `--chi2-definition`:
+- `raw_residual` (default): χ² = σ² - Direct from SVD
+- `per_row`: χ² = σ²/M - Normalized by constraint count
+- `ratio`: χ² = (σ_min/σ_max)² - Condition number (recommended for matching paper's O(1) scale)
+- `frobenius`: χ² = σ²/||A||_F² - Relative to matrix Frobenius norm
+
+See `docs/chi2_definitions.md` for detailed explanation and usage examples.
+
 
 
 ### Rho cutoff policy

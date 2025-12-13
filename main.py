@@ -131,6 +131,7 @@ def run_pipeline(
     benchmark: bool = False,
     use_scalar_q: bool = False,
     chi2_mode: str = "paper",
+    chi2_definition: str = "raw_residual",
     no_plot: bool = False,
     no_eigenvalues: bool = False,
     clear_caches_per_k: bool = False,
@@ -295,7 +296,7 @@ def run_pipeline(
 
         t0 = time.perf_counter() if benchmark else None
         normalize_rows = (chi2_mode == "legacy")
-        chi_sq, _, svd_diag = solve_system_via_svd_numeric(A, n_smallest=MAX_RANKS, normalize_rows=normalize_rows)
+        chi_sq, _, svd_diag = solve_system_via_svd_numeric(A, n_smallest=MAX_RANKS, normalize_rows=normalize_rows, chi2_definition=chi2_definition)
         if benchmark:
             timings.setdefault("svd", []).append(time.perf_counter() - t0)
         for idx in range(MAX_RANKS):
@@ -475,6 +476,14 @@ def parse_args():
         help="Chi-squared computation mode: 'paper' (default, no row normalization) or 'legacy' (with row normalization)",
     )
     parser.add_argument(
+        "--chi2-definition",
+        type=str,
+        choices=["raw_residual", "per_row", "ratio", "frobenius"],
+        default="raw_residual",
+        help="Chi-squared definition: 'raw_residual' (||Aa||², default), 'per_row' (||Aa||²/M), "
+             "'ratio' ((σ_min/σ_max)²), 'frobenius' (||Aa||²/||A||_F²)",
+    )
+    parser.add_argument(
         "--profile",
         action="store_true",
         help="Enable cProfile profiling and write profile.prof to output directory",
@@ -570,6 +579,7 @@ def _run_main_logic(args):
         benchmark=args.benchmark,
         use_scalar_q=args.use_scalar_q,
         chi2_mode=args.chi2_mode,
+        chi2_definition=args.chi2_definition,
         no_plot=args.no_plot,
         no_eigenvalues=args.no_eigenvalues,
         clear_caches_per_k=args.clear_caches_per_k,
