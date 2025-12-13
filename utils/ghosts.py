@@ -130,8 +130,8 @@ def enumerate_ghost_images(
                     continue
                 seen_images.add(key)
                 images.append((float(rho), float(theta), float(phi)))
-            if len(images) >= max_images:
-                break
+                if len(images) >= max_images:
+                    break
 
         if len(images) < min_images:
             LOGGER.warning(

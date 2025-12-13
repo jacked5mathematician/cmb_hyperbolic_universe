@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Iterable, List, Sequence, Tuple
+from typing import Iterable, List, Sequence, Tuple, TypeAlias
 
 import numpy as np
 
@@ -14,8 +14,8 @@ from .transformations import (
     project_to_klein,
 )
 
-PointSamples = Tuple[np.ndarray, np.ndarray]
-PointSamplesWithMeta = Tuple[np.ndarray, np.ndarray, dict]
+PointSamples: TypeAlias = Tuple[np.ndarray, np.ndarray]
+PointSamplesWithMeta: TypeAlias = Tuple[np.ndarray, np.ndarray, dict]
 LOGGER = logging.getLogger(__name__)
 DEFAULT_FALLBACK_RADIUS = 0.85  # Conservative radius to keep well inside the Poincaré ball
 MAX_ATTEMPT_MULTIPLIER = 50  # Try up to this multiple of n_points before falling back

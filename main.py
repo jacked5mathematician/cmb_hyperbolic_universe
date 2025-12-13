@@ -19,6 +19,7 @@ from utils import (
     sample_points_in_dirichlet_domain,
     solve_system_via_svd_numeric,
 )
+from utils.eigenvalues import extract_eigenvalues_from_spectrum
 from utils.ghosts import get_group_elements
 from utils.points import DEFAULT_FALLBACK_RADIUS
 from utils.transformations import (
@@ -194,7 +195,9 @@ def run_pipeline(
             if rows < M_target:
                 selected_points.append(imgs)
                 rows += contribution
-            if rows >= M_target:
+                if rows >= M_target:
+                    break
+            else:
                 break
 
         fallback_used = cutoff_fallback or sampling_meta.get("fallback_used", False) or geom_fallback or ghost_meta.get("fallback_used", False)
@@ -269,16 +272,10 @@ def run_pipeline(
         "report": report,
     }
     if eigen_threshold is not None:
-        try:
-            from utils.eigenvalues import extract_eigenvalues_from_spectrum
-        except ImportError:
-            # Eigenvalue extraction is optional; skip if the helper is unavailable
-            extract_eigenvalues_from_spectrum = None
-        if extract_eigenvalues_from_spectrum is not None:
-            eigen_path = extract_eigenvalues_from_spectrum(
-                spectrum_path, output_dir, threshold=eigen_threshold, refine=True
-            )
-            result["eigenvalues_path"] = eigen_path
+        eigen_path = extract_eigenvalues_from_spectrum(
+            spectrum_path, output_dir, threshold=eigen_threshold, refine=True
+        )
+        result["eigenvalues_path"] = eigen_path
     return result
 
 

@@ -9,6 +9,7 @@ import numpy as np
 from .conventions import q_squared
 
 MULTIPLICITY_TOL = 1.1
+POLY_EPS = 1e-12
 
 
 def _local_minima(values: Sequence[float]) -> List[int]:
@@ -25,7 +26,7 @@ def _refine_minimum(k_values: np.ndarray, chi_values: np.ndarray, idx: int) -> T
     ks = k_values[idx - 1 : idx + 2]
     chis = chi_values[idx - 1 : idx + 2]
     coeffs = np.polyfit(ks, chis, 2)
-    if abs(coeffs[0]) < 1e-12:
+    if abs(coeffs[0]) < POLY_EPS:
         return float(k_values[idx]), float(chi_values[idx])
     k_star = -coeffs[1] / (2 * coeffs[0])
     chi_star = np.polyval(coeffs, k_star)
