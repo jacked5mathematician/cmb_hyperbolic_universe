@@ -15,6 +15,7 @@ from .transformations import (
 )
 
 PointSamples = Tuple[np.ndarray, np.ndarray]
+PointSamplesWithMeta = Tuple[np.ndarray, np.ndarray, dict]
 LOGGER = logging.getLogger(__name__)
 DEFAULT_FALLBACK_RADIUS = 0.85  # Conservative radius to keep well inside the Poincaré ball
 MAX_ATTEMPT_MULTIPLIER = 50  # Try up to this multiple of n_points before falling back
@@ -37,7 +38,7 @@ def sample_points_in_dirichlet_domain(
     word_depth: int = 3,
     tolerance: float = 1e-6,
     return_metadata: bool = False,
-) -> PointSamples | Tuple[np.ndarray, np.ndarray, dict]:
+) -> PointSamples | PointSamplesWithMeta:
     """
     Sample points that satisfy the Dirichlet-domain inequality d(x, p0) <= d(x, γ(p0))
     for a finite set of group elements γ (words up to `word_depth`). Falls back to

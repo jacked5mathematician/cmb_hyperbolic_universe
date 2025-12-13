@@ -107,7 +107,7 @@ def enumerate_ghost_images(
         group_elements, fallback_used = get_group_elements(manifold_name, max_word_length)
     else:
         group_elements = list(group_elements)
-        fallback_used = fallback_used or (len(group_elements) == 0)
+        fallback_used = len(group_elements) == 0
     points_images: List[List[Tuple[float, float, float]]] = []
 
     for point in base_points:
