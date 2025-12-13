@@ -10,33 +10,22 @@ import time
 from utils.sys_generation import construct_numeric_matrix
 
 # Function to solve the system using SVD and compute chi^2, with timing
-def solve_system_via_svd_numeric(A):
+def solve_system_via_svd_numeric(A, n_smallest: int = 5):
     start_time = time.time()  # Start timing
 
     # Perform Singular Value Decomposition
-    U, s, Vt = svd(A, full_matrices=False)
+    _, s, Vt = svd(A, full_matrices=False)
 
-    # Iterate through all singular vectors (rows of Vt)
-    chi_squared_values = []
-    vectors = []
+    # Smallest singular values (and corresponding vectors)
+    order = np.argsort(s)
+    take = min(n_smallest, len(s))
+    smallest_sigma = s[order[:take]]
+    vectors = Vt[order[:take]]
 
-    for vec in Vt:
-        chi_squared = np.linalg.norm(A @ vec) ** 2  # Compute chi^2
-        chi_squared_values.append(chi_squared)
-        vectors.append(vec)
-
-    # Find the indices of the 3 smallest chi^2 values
-    sorted_indices = np.argsort(chi_squared_values)[:3]
-
-    # Extract the top 3 chi^2 values and corresponding vectors
-    top_chi_squared_values = [chi_squared_values[idx] for idx in sorted_indices]
-    top_vectors = [vectors[idx] for idx in sorted_indices]
+    chi_squared = smallest_sigma ** 2
 
     end_time = time.time()  # End timing
-    elapsed_time = end_time - start_time
-    #print(f"SVD computation completed in {elapsed_time:.4f} seconds.")
-
-    return top_chi_squared_values, top_vectors
+    return chi_squared.tolist(), vectors
 
 import matplotlib.pyplot as plt
 from datetime import datetime
