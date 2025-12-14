@@ -34,6 +34,12 @@ from utils.transformations import (
 LOGGER = logging.getLogger("pipeline")
 PAPER_L_MIN = 5
 MAX_RANKS = 5
+MIN_IMAGES_PER_POINT = 10
+MIN_BASE_POINTS = 8
+MIN_RETENTION = 0.5
+RHO_MAX_CAP = 6.0
+RHO_EXPANSION_DELTA = 0.25
+PROBE_POINTS = 12
 
 
 def _paper_L(k: float) -> int:
@@ -64,6 +70,59 @@ def _cap_images_to_max_pairs(images: List[Tuple[float, float, float]], max_pairs
     # Solve n(n-1)/2 <= max_pairs -> n <= (1 + sqrt(1 + 8*max_pairs)) / 2
     n_cap = int((1 + math.isqrt(1 + 8 * max_pairs)) // 2)
     return images[: min(len(images), n_cap)]
+
+
+def choose_rho_window_adaptive(
+    manifold_name: str,
+    base_points: np.ndarray,
+    k: float,
+    L: int,
+    rho_max_paper: float,
+    min_images: int,
+    min_retention: float,
+    rho_max_cap: float = RHO_MAX_CAP,
+    delta: float = RHO_EXPANSION_DELTA,
+    probe_points: int = PROBE_POINTS,
+    group_elements=None,
+    max_word_length: int = 6,
+) -> Tuple[float, float, bool, float, float, int]:
+    """Adaptively choose rho window starting from paper cutoffs.
+
+    Returns (rho_min, rho_max_final, expanded, median_images, retention, steps).
+    """
+    rho_min = 0.0
+    rho_max = float(rho_max_paper)
+    expanded = False
+    steps = 0
+    probe_count = min(probe_points, len(base_points))
+    probe_subset = base_points[:probe_count]
+
+    while True:
+        counts = []
+        for p in probe_subset:
+            imgs = enumerate_ghost_images(
+                manifold_name,
+                [p],
+                rho_min=rho_min,
+                rho_max=rho_max,
+                min_images=min_images,
+                max_word_length=max_word_length,
+                group_elements=group_elements,
+                drop_identity=True,
+            )
+            counts.append(len(imgs[0]) if imgs else 0)
+        counts_arr = np.array(counts, dtype=float)
+        retention = float(np.mean(counts_arr >= min_images)) if len(counts_arr) else 0.0
+        med = float(np.median(counts_arr)) if len(counts_arr) else 0.0
+
+        if med >= min_images and retention >= min_retention:
+            return rho_min, rho_max, expanded, med, retention, steps
+        if rho_max >= rho_max_cap:
+            return rho_min, min(rho_max, rho_max_cap), True, med, retention, steps
+
+        rho_max += delta
+        expanded = True
+        steps += 1
 
 
 def _build_dirichlet_checker(group_elements: List[np.ndarray], tolerance: float = 1e-6):
@@ -167,6 +226,11 @@ def run_pipeline(
     L_arr: List[int] = []
     rho_min_arr: List[float] = []
     rho_max_arr: List[float] = []
+    rho_max_paper_arr: List[float] = []
+    rho_expanded_arr: List[bool] = []
+    rho_expansion_steps_arr: List[int] = []
+    probe_median_images_arr: List[float] = []
+    probe_retention_arr: List[float] = []
     M_arr: List[int] = []
     N_arr: List[int] = []
     kept_points_arr: List[int] = []
@@ -190,18 +254,18 @@ def run_pipeline(
         M_target = _target_M(L, c_val)
         
         t0 = time.perf_counter() if benchmark else None
-        rho_min, rho_max, cutoff_fallback = compute_rho_cutoffs(k, L, l_min)
+        rho_min_paper, rho_max_paper, cutoff_fallback = compute_rho_cutoffs(k, L, l_min)
         if benchmark:
             timings.setdefault("cutoff_computation", []).append(time.perf_counter() - t0)
         
         LOGGER.info(
-            "k=%.3f -> L=%s c=%s l_min=%s rho_min=%.3f rho_max=%.3f M_target=%s",
+            "k=%.3f -> L=%s c=%s l_min=%s rho_min_paper=%.3f rho_max_paper=%.3f M_target=%s",
             k,
             L,
             c_val,
             l_min,
-            rho_min,
-            rho_max,
+            rho_min_paper,
+            rho_max_paper,
             M_target,
         )
 
@@ -209,8 +273,13 @@ def run_pipeline(
             for idx in range(MAX_RANKS):
                 chi2_ranks[idx].append(np.nan)
             L_arr.append(L)
-            rho_min_arr.append(rho_min)
-            rho_max_arr.append(rho_max)
+            rho_min_arr.append(0.0)
+            rho_max_arr.append(rho_max_paper)
+            rho_max_paper_arr.append(rho_max_paper)
+            rho_expanded_arr.append(False)
+            rho_expansion_steps_arr.append(0)
+            probe_median_images_arr.append(np.nan)
+            probe_retention_arr.append(np.nan)
             M_arr.append(0)
             N_arr.append(N)
             kept_points_arr.append(0)
@@ -225,6 +294,47 @@ def run_pipeline(
             continue
 
         group_elements, geom_fallback = get_group_elements(manifold_name, max_word_length)
+        rho_min, rho_max, expanded, med_probe, retention_probe, expansion_steps = choose_rho_window_adaptive(
+            manifold_name,
+            base_points,
+            k,
+            L,
+            rho_max_paper,
+            min_images=MIN_IMAGES_PER_POINT,
+            min_retention=MIN_RETENTION,
+            rho_max_cap=RHO_MAX_CAP,
+            delta=RHO_EXPANSION_DELTA,
+            probe_points=PROBE_POINTS,
+            group_elements=group_elements,
+            max_word_length=max_word_length,
+        )
+
+        LOGGER.info(
+            "k=%.3f L=%s rho_min=%.3f rho_max_paper=%.3f rho_max_final=%.3f expanded=%s med_images_probe=%.1f retention=%.2f min_images=%d min_retention=%.2f",
+            k,
+            L,
+            rho_min,
+            rho_max_paper,
+            rho_max,
+            expanded,
+            med_probe,
+            retention_probe,
+            MIN_IMAGES_PER_POINT,
+            MIN_RETENTION,
+        )
+        if expanded:
+            LOGGER.info(
+                "[NON-PAPER] expanded rho_max for k=%.3f L=%s from %.3f to %.3f in %d steps (cap=%.2f, delta=%.2f); probe med=%.1f retention=%.2f",
+                k,
+                L,
+                rho_max_paper,
+                rho_max,
+                expansion_steps,
+                RHO_MAX_CAP,
+                RHO_EXPANSION_DELTA,
+                med_probe,
+                retention_probe,
+            )
         
         t0 = time.perf_counter() if benchmark else None
         points_images, ghost_meta = enumerate_ghost_images(
@@ -232,10 +342,11 @@ def run_pipeline(
             base_points,
             rho_min=rho_min,
             rho_max=rho_max,
-            min_images=10,
+            min_images=MIN_IMAGES_PER_POINT,
             max_word_length=max_word_length,
             group_elements=group_elements,
             return_metadata=True,
+            drop_identity=True,
         )
         if benchmark:
             timings.setdefault("ghost_enumeration", []).append(time.perf_counter() - t0)
@@ -243,9 +354,42 @@ def run_pipeline(
         kept_total = len(points_images)
         LOGGER.info("Retained %s/%s base points after ghost enumeration", kept_total, len(base_points))
 
+        fallback_used = cutoff_fallback or sampling_meta.get("fallback_used", False) or geom_fallback or ghost_meta.get("fallback_used", False)
+
+        def record_nan(reason: str, kept_points: int, M_val: int = 0):
+            LOGGER.warning("%s", reason)
+            for idx in range(MAX_RANKS):
+                chi2_ranks[idx].append(np.nan)
+            L_arr.append(L)
+            rho_min_arr.append(rho_min)
+            rho_max_arr.append(rho_max)
+            rho_max_paper_arr.append(rho_max_paper)
+            rho_expanded_arr.append(expanded)
+            rho_expansion_steps_arr.append(expansion_steps)
+            probe_median_images_arr.append(med_probe)
+            probe_retention_arr.append(retention_probe)
+            M_arr.append(M_val)
+            N_arr.append(N)
+            kept_points_arr.append(kept_points)
+            fallback_arr.append(fallback_used)
+            M_target_arr.append(M_target)
+            sigma_min_arr.append(np.nan)
+            sigma_max_arr.append(np.nan)
+            A_frobenius_arr.append(np.nan)
+            A_max_abs_arr.append(np.nan)
+            A_min_nonzero_arr.append(np.nan)
+            images_per_point_arr.append(np.nan)
+
+        if kept_total < MIN_BASE_POINTS:
+            record_nan(
+                f"Insufficient retained points for k={k:.3f} (retained={kept_total}, min_base_points={MIN_BASE_POINTS}); marking NaN chi^2.",
+                kept_total,
+            )
+            continue
+
         selected_points: List[List[Tuple[float, float, float]]] = []
         rows = 0
-        required_min_points = min(10, max(8, len(points_images)))
+        required_min_points = min(10, max(MIN_BASE_POINTS, len(points_images)))
         max_pairs_per_point = max(1500, M_target // max(required_min_points, 1))
 
         for imgs in points_images:
@@ -261,26 +405,16 @@ def run_pipeline(
             if rows >= M_target and len(selected_points) >= required_min_points:
                 break
 
-        fallback_used = cutoff_fallback or sampling_meta.get("fallback_used", False) or geom_fallback or ghost_meta.get("fallback_used", False)
-
         if not selected_points:
-            LOGGER.warning("No viable points retained for k=%.3f; marking NaN chi^2.", k)
-            for idx in range(MAX_RANKS):
-                chi2_ranks[idx].append(np.nan)
-            L_arr.append(L)
-            rho_min_arr.append(rho_min)
-            rho_max_arr.append(rho_max)
-            M_arr.append(0)
-            N_arr.append(N)
-            kept_points_arr.append(0)
-            fallback_arr.append(fallback_used)
-            M_target_arr.append(M_target)
-            sigma_min_arr.append(np.nan)
-            sigma_max_arr.append(np.nan)
-            A_frobenius_arr.append(np.nan)
-            A_max_abs_arr.append(np.nan)
-            A_min_nonzero_arr.append(np.nan)
-            images_per_point_arr.append(np.nan)
+            record_nan(f"No viable points retained for k={k:.3f}; marking NaN chi^2.", kept_total)
+            continue
+
+        if len(selected_points) < MIN_BASE_POINTS or rows < max(MIN_BASE_POINTS, 2):
+            record_nan(
+                f"Matrix under-populated for k={k:.3f} (rows={rows}, retained_points={len(selected_points)}); marking NaN chi^2.",
+                len(selected_points),
+                M_val=rows,
+            )
             continue
 
         t0 = time.perf_counter() if benchmark else None
@@ -293,6 +427,14 @@ def run_pipeline(
         
         if N_check != N:
             self_check_issues.append(f"N mismatch for k={k}: expected {N}, got {N_check}")
+
+        if M < max(MIN_BASE_POINTS, 2) or N_check < 2:
+            record_nan(
+                f"Constraint matrix too small for k={k:.3f} (M={M}, N={N_check}); marking NaN chi^2.",
+                len(selected_points),
+                M_val=M,
+            )
+            continue
 
         t0 = time.perf_counter() if benchmark else None
         normalize_rows = (chi2_mode == "legacy")
@@ -315,6 +457,11 @@ def run_pipeline(
         L_arr.append(L)
         rho_min_arr.append(rho_min)
         rho_max_arr.append(rho_max)
+        rho_max_paper_arr.append(rho_max_paper)
+        rho_expanded_arr.append(expanded)
+        rho_expansion_steps_arr.append(expansion_steps)
+        probe_median_images_arr.append(med_probe)
+        probe_retention_arr.append(retention_probe)
         M_arr.append(M)
         N_arr.append(N)
         kept_points_arr.append(len(selected_points))
@@ -343,6 +490,11 @@ def run_pipeline(
         "L": np.array(L_arr, dtype=int),
         "rho_min": np.array(rho_min_arr, dtype=float),
         "rho_max": np.array(rho_max_arr, dtype=float),
+        "rho_max_paper": np.array(rho_max_paper_arr, dtype=float),
+        "rho_expanded": np.array(rho_expanded_arr, dtype=bool),
+        "rho_expansion_steps": np.array(rho_expansion_steps_arr, dtype=int),
+        "probe_median_images": np.array(probe_median_images_arr, dtype=float),
+        "probe_retention": np.array(probe_retention_arr, dtype=float),
         "M": np.array(M_arr, dtype=int),
         "N": np.array(N_arr, dtype=int),
         "kept_points": np.array(kept_points_arr, dtype=int),

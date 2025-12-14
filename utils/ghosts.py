@@ -97,6 +97,7 @@ def enumerate_ghost_images(
     max_images: int = MAX_IMAGES_DEFAULT,
     group_elements: List[np.ndarray] | None = None,
     return_metadata: bool = False,
+    drop_identity: bool = False,
 ) -> GhostImages | tuple[GhostImages, dict]:
     """
     Enumerate ghost images for each base point using group words up to max_word_length.
@@ -108,6 +109,9 @@ def enumerate_ghost_images(
     else:
         group_elements = list(group_elements)
         fallback_used = len(group_elements) == 0
+    if drop_identity and group_elements:
+        identity_key = tuple(np.round(np.eye(4).flatten(), MATRIX_ROUND_DECIMALS))
+        group_elements = [g for g in group_elements if tuple(np.round(g.flatten(), MATRIX_ROUND_DECIMALS)) != identity_key]
     points_images: List[List[Tuple[float, float, float]]] = []
 
     for point in base_points:

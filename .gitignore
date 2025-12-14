@@ -19,3 +19,6 @@ output_plots/
 debugs/
 
 point_data/
+.venv/
+logs/
+runs/
