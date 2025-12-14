@@ -42,7 +42,9 @@ See `docs/chi2_definitions.md` for detailed explanation and usage examples.
 `|X_k^ell(rho) * sinh(rho)| <= threshold` for `ell = l_min` (rho_min) and `ell = L` (rho_max).
 If no crossing is found up to a safety cap, it logs a warning, marks `fallback_used=True`, and falls
 back to an envelope heuristic. The function always guarantees `0 <= rho_min < rho_max` or raises a
-clear error.
+clear error. The envelope follows equation (2.8) of the paper with
+`rho_0 = asinh(sqrt(l(l+1))/k)` and `phi_0 = -k * rho_0`, so
+`|X_k^ell(rho) * sinh(rho)| ≈ |cos(k * (rho - rho_0))|` for `rho >= rho_0`.
 
 ### Ghost enumeration
 
