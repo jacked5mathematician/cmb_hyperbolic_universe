@@ -10,7 +10,7 @@ ENVELOPE_L_SCALE = 0.5  # Heuristic factor to widen fallback rho_max with increa
 
 
 def _rho_turning_point(k: float, ell: int) -> float:
-    """Paper's rho_0 turning point: asinh(sqrt(l(l+1))/k)."""
+    """Paper equation (2.8) from Cornish & Spergel (1999) turning point (transition to oscillatory regime): asinh(sqrt(ell(ell+1))/k)."""
     k = float(k)
     if k <= 0:
         raise ValueError("k must be positive")
@@ -24,7 +24,8 @@ def _abs_radial_envelope(k: float, ell: int, rho: float) -> float:
 
     For rho >= rho_0 (turning point), equation (2.8) gives
         X_k^ell(rho) ~ cos(k * rho + phi_0) / sinh(rho)
-    with phi_0 = -k * rho_0. Multiplying by sinh(rho) yields cos(k * (rho - rho_0)).
+    Substituting phi_0 = -k * rho_0 collapses cos(k * rho + phi_0) to cos(k * (rho - rho_0));
+    multiplying by sinh(rho) follows that phase.
 
     We ignore the rho << rho_0 behavior and suppress crossings before rho_0 by
     returning +inf in that region.
@@ -34,6 +35,16 @@ def _abs_radial_envelope(k: float, ell: int, rho: float) -> float:
         return float("inf")
     phase = float(k) * (float(rho) - rho0)  # phi_0 = -k * rho_0
     return float(abs(np.cos(phase)))
+
+
+def rho_turning_point(k: float, ell: int) -> float:
+    """Public wrapper for the paper's rho_0 turning point."""
+    return _rho_turning_point(k, ell)
+
+
+def abs_radial_envelope(k: float, ell: int, rho: float) -> float:
+    """Public wrapper for the paper-inspired |X_k^ell(rho) * sinh(rho)| envelope."""
+    return _abs_radial_envelope(k, ell, rho)
 
 
 def _find_crossing(
@@ -135,4 +146,4 @@ def compute_rho_cutoffs(
     return rho_min, rho_max, fallback_used
 
 
-__all__ = ["compute_rho_cutoffs"]
+__all__ = ["compute_rho_cutoffs", "rho_turning_point", "abs_radial_envelope"]

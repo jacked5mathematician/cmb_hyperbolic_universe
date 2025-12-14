@@ -19,8 +19,8 @@ import numpy as np
 
 from utils.cutoffs import (
     ENVELOPE_L_SCALE,
-    _abs_radial_envelope,
-    _rho_turning_point,
+    abs_radial_envelope,
+    rho_turning_point,
     compute_rho_cutoffs,
 )
 
@@ -43,7 +43,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _evaluate_envelope(k: float, ell: int, rhos: np.ndarray) -> np.ndarray:
-    vals = np.array([_abs_radial_envelope(k, ell, float(r)) for r in rhos], dtype=float)
+    vals = np.array([abs_radial_envelope(k, ell, float(r)) for r in rhos], dtype=float)
     vals[~np.isfinite(vals)] = np.nan
     return vals
 
@@ -62,24 +62,24 @@ def main() -> None:
     rhos = np.arange(0.0, args.rho_cap + args.step, args.step)
     env_lmin = _evaluate_envelope(args.k, args.l_min, rhos)
     env_L = _evaluate_envelope(args.k, args.L, rhos)
-    rho0_lmin = _rho_turning_point(args.k, args.l_min)
-    rho0_L = _rho_turning_point(args.k, args.L)
+    rho0_lmin = rho_turning_point(args.k, args.l_min)
+    rho0_L = rho_turning_point(args.k, args.L)
 
     plt.figure(figsize=(9, 5))
-    plt.plot(rhos, env_lmin, label=f"|X_k^{args.l_min}|sinh|", alpha=0.9)
-    plt.plot(rhos, env_L, label=f"|X_k^{args.L}|sinh|", alpha=0.9)
+    plt.plot(rhos, env_lmin, label=rf"$|X_k^{ {args.l_min} }(\rho)\sinh(\rho)|$", alpha=0.9)
+    plt.plot(rhos, env_L, label=rf"$|X_k^{ {args.L} }(\rho)\sinh(\rho)|$", alpha=0.9)
     plt.axhline(args.threshold, color="red", linestyle="--", label="threshold")
     plt.axvline(rho_min, color="purple", linestyle=":", label="rho_min")
     plt.axvline(rho_max, color="green", linestyle=":", label="rho_max")
-    plt.axvline(rho0_lmin, color="purple", linestyle="--", alpha=0.6, label=r"$\\rho_0(\\ell_{min})$")
-    plt.axvline(rho0_L, color="green", linestyle="--", alpha=0.6, label=r"$\\rho_0(L)$")
+    plt.axvline(rho0_lmin, color="purple", linestyle="--", alpha=0.6, label=r"$\rho_0(\ell_{min})$")
+    plt.axvline(rho0_L, color="green", linestyle="--", alpha=0.6, label=r"$\rho_0(L)$")
 
     plt.title(
         rf"Cutoff debug: k={args.k:.3f}, L={args.L}, l_min={args.l_min}, "
         rf"fallback={fallback}, L scale={ENVELOPE_L_SCALE}"
     )
-    plt.xlabel(r"$\\rho$")
-    plt.ylabel(r"$|X_k^\\ell(\\rho)\\,\\sinh(\\rho)|$")
+    plt.xlabel(r"$\rho$")
+    plt.ylabel(r"$|X_k^\ell(\rho)\,\sinh(\rho)|$")
     finite_vals = np.concatenate(
         [env_lmin[np.isfinite(env_lmin)], env_L[np.isfinite(env_L)], np.array([args.threshold])]
     )
