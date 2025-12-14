@@ -176,7 +176,9 @@ def test_normalized_vs_unnormalized_rows():
     
     # Values should differ significantly (normalization has an effect)
     # Don't check exact values but verify they're in different scales
-    assert not np.allclose(chi2_normalized := chi2_norm, chi2_unnormalized := chi2_unnorm, rtol=0.1), \
+    chi2_normalized = chi2_norm
+    chi2_unnormalized = chi2_unnorm
+    assert not np.allclose(chi2_normalized, chi2_unnormalized, rtol=0.1), \
         "Normalized and unnormalized chi² should have different scales"
     
     # Both should have valid diagnostics
