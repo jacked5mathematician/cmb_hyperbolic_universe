@@ -5,17 +5,35 @@ from typing import Tuple
 
 import numpy as np
 
-from .special_functions import Phi_nu_l_cached
-from .conventions import k_to_nu
-
 LOGGER = logging.getLogger(__name__)
 ENVELOPE_L_SCALE = 0.5  # Heuristic factor to widen fallback rho_max with increasing L
 
 
+def _rho_turning_point(k: float, ell: int) -> float:
+    """Paper's rho_0 turning point: asinh(sqrt(l(l+1))/k)."""
+    k = float(k)
+    if k <= 0:
+        raise ValueError("k must be positive")
+    ell = int(ell)
+    return float(np.arcsinh(np.sqrt(ell * (ell + 1)) / k))
+
+
 def _abs_radial_envelope(k: float, ell: int, rho: float) -> float:
-    """Compute |X_k^ell(rho) * sinh(rho)| using the current radial implementation."""
-    nu = k_to_nu(k)
-    return float(abs(Phi_nu_l_cached(nu, ell, rho) * np.sinh(rho)))
+    """
+    Paper-inspired envelope for |X_k^ell(rho) * sinh(rho)|.
+
+    For rho >= rho_0 (turning point), equation (2.8) gives
+        X_k^ell(rho) ~ cos(k * rho + phi_0) / sinh(rho)
+    with phi_0 = -k * rho_0. Multiplying by sinh(rho) yields cos(k * (rho - rho_0)).
+
+    We ignore the rho << rho_0 behavior and suppress crossings before rho_0 by
+    returning +inf in that region.
+    """
+    rho0 = _rho_turning_point(k, ell)
+    if rho < rho0:
+        return float("inf")
+    phase = float(k) * (float(rho) - rho0)  # phi_0 = -k * rho_0
+    return float(abs(np.cos(phase)))
 
 
 def _find_crossing(
