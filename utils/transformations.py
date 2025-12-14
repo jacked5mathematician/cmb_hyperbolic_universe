@@ -99,8 +99,13 @@ def poincare_to_pseudo_spherical(points):
     X0 = (1 + norm_squared) / (1 - norm_squared)
     X = 2 * valid_points / (1 - norm_squared[:, np.newaxis])
     rho = np.arccosh(X0)
-    sinh_rho = np.sinh(rho)
-    theta = np.arccos(X[:, 2] / sinh_rho)
+    
+    # Compute theta using atan2 for numerical stability
+    # theta = arctan2(sqrt(X1^2 + X2^2), X3)
+    # This avoids division by sinh(rho) which can be near zero
+    xy_norm = np.sqrt(X[:, 0]**2 + X[:, 1]**2)
+    theta = np.arctan2(xy_norm, X[:, 2])
+    
     phi = np.arctan2(X[:, 1], X[:, 0])
 
     pseudo_spherical_points = np.column_stack((rho, theta, phi))

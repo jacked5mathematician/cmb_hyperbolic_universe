@@ -21,6 +21,20 @@ DEFAULT_FALLBACK_RADIUS = 0.85  # Conservative radius to keep well inside the Po
 MAX_ATTEMPT_MULTIPLIER = 50  # Try up to this multiple of n_points before falling back
 
 
+def compute_dirichlet_images(group_elements: Sequence[np.ndarray]) -> List[np.ndarray]:
+    """Return γ·p₀ images (in Poincaré coordinates) for the origin."""
+    base_point = np.zeros(3, dtype=float)
+    gamma_p0 = []
+    for mat in group_elements:
+        transformed = apply_so31_action(mat, base_point)
+        klein = project_to_klein(transformed)
+        poincare = klein_to_poincare([klein])[0]
+        if np.linalg.norm(poincare) >= 1.0:
+            continue
+        gamma_p0.append(poincare)
+    return gamma_p0
+
+
 def _sample_in_ball(n_points: int, rng: np.random.Generator, radius: float = DEFAULT_FALLBACK_RADIUS) -> np.ndarray:
     points = []
     while len(points) < n_points:
@@ -50,6 +64,8 @@ def sample_points_in_dirichlet_domain(
         "fallback_used": False,
         "word_depth": word_depth,
         "group_elements": 0,
+        "dirichlet_count": 0,
+        "fallback_count": 0,
     }
 
     group_elements, generators_fallback = get_group_elements(manifold_name, word_depth)
@@ -60,18 +76,13 @@ def sample_points_in_dirichlet_domain(
         LOGGER.warning("No group elements available; falling back to ball sampling.")
         points = _sample_in_ball(n_points, rng, fallback_radius)
         metadata["fallback_used"] = True
+        metadata["dirichlet_count"] = 0
+        metadata["fallback_count"] = n_points
         pseudo = poincare_to_pseudo_spherical(points)
         return (points, pseudo, metadata) if return_metadata else (points, pseudo)
 
     base_point = np.zeros(3, dtype=float)
-    gamma_p0 = []
-    for mat in group_elements:
-        transformed = apply_so31_action(mat, base_point)
-        klein = project_to_klein(transformed)
-        poincare = klein_to_poincare([klein])[0]
-        if np.linalg.norm(poincare) >= 1.0:
-            continue
-        gamma_p0.append(poincare)
+    gamma_p0 = compute_dirichlet_images(group_elements)
 
     def in_dirichlet_domain(candidate: np.ndarray) -> bool:
         d0 = poincare_distance(candidate, base_point)
@@ -92,6 +103,7 @@ def sample_points_in_dirichlet_domain(
             continue
         accepted.append(candidate)
 
+    metadata["dirichlet_count"] = len(accepted)
     if len(accepted) < n_points:
         LOGGER.warning(
             "Only accepted %s/%s points via Dirichlet sampling; filling with fallback.",
@@ -102,11 +114,13 @@ def sample_points_in_dirichlet_domain(
         accepted_arr = np.array(accepted, dtype=float).reshape(-1, 3)
         points = np.vstack([accepted_arr, extra])
         metadata["fallback_used"] = True
+        metadata["fallback_count"] = n_points - metadata["dirichlet_count"]
     else:
         points = np.array(accepted, dtype=float).reshape(-1, 3)
+        metadata["fallback_count"] = 0
     metadata["dirichlet_checked"] = True
     pseudo = poincare_to_pseudo_spherical(points)
     return (points, pseudo, metadata) if return_metadata else (points, pseudo)
 
 
-__all__ = ["sample_points_in_dirichlet_domain"]
+__all__ = ["sample_points_in_dirichlet_domain", "compute_dirichlet_images"]

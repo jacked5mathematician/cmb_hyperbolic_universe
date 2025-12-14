@@ -8,6 +8,7 @@ from .points import sample_points_in_dirichlet_domain, DEFAULT_FALLBACK_RADIUS
 from .sys_generation import generate_matrix_system, generate_matrix_system_scalar
 from .svd import solve_system_via_svd_numeric
 from .eigenvalues import extract_eigenvalues_from_spectrum
+from .diagnostics import diagnose_base_points, write_point_diagnostics
 
 # Transformations used by pipeline
 from .transformations import (

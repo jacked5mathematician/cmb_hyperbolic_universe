@@ -20,6 +20,8 @@ from utils import (
     generate_matrix_system_scalar,
     sample_points_in_dirichlet_domain,
     solve_system_via_svd_numeric,
+    diagnose_base_points,
+    write_point_diagnostics,
 )
 from utils.eigenvalues import extract_eigenvalues_from_spectrum
 from utils.ghosts import get_group_elements
@@ -135,6 +137,7 @@ def run_pipeline(
     no_plot: bool = False,
     no_eigenvalues: bool = False,
     clear_caches_per_k: bool = False,
+    point_diagnostics_path: Path | None = None,
 ) -> Dict:
     import time
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -157,11 +160,40 @@ def run_pipeline(
         sampling_meta.get("fallback_used"),
     )
 
+    group_elements_cache, geom_fallback_base = get_group_elements(manifold_name, max_word_length)
+
     dirichlet_checker = None
-    if self_check:
-        group_elements, _ = get_group_elements(manifold_name, word_depth)
-        if group_elements:
-            dirichlet_checker = _build_dirichlet_checker(group_elements)
+    if self_check and group_elements_cache:
+        dirichlet_checker = _build_dirichlet_checker(group_elements_cache)
+
+    if point_diagnostics_path is not None:
+        diag_payload = diagnose_base_points(
+            base_points,
+            base_points_pseudo,
+            manifold_name,
+            group_elements_cache,
+            sampling_meta,
+            max_dirichlet_images=800,
+        )
+        summary = diag_payload["summary"]
+        margin = summary["min_margin"]
+        margin_str = f"{margin:.3e}" if margin is not None else "n/a"
+        if summary["invalid_points"]:
+            LOGGER.warning(
+                "Point diagnostics detected %s potential Dirichlet violations (min margin=%s)",
+                summary["invalid_points"],
+                margin_str,
+            )
+        else:
+            LOGGER.info(
+                "Point diagnostics: %s points (dirichlet=%s, fallback=%s, min margin=%s)",
+                summary["total_points"],
+                summary["dirichlet_points"],
+                summary["fallback_points"],
+                margin_str,
+            )
+        write_point_diagnostics(diag_payload, point_diagnostics_path)
+        LOGGER.info("Wrote point diagnostics to %s", point_diagnostics_path)
 
     chi2_ranks: List[List[float]] = [[] for _ in range(MAX_RANKS)]
     L_arr: List[int] = []
@@ -224,8 +256,6 @@ def run_pipeline(
             images_per_point_arr.append(np.nan)
             continue
 
-        group_elements, geom_fallback = get_group_elements(manifold_name, max_word_length)
-        
         t0 = time.perf_counter() if benchmark else None
         points_images, ghost_meta = enumerate_ghost_images(
             manifold_name,
@@ -234,7 +264,7 @@ def run_pipeline(
             rho_max=rho_max,
             min_images=10,
             max_word_length=max_word_length,
-            group_elements=group_elements,
+            group_elements=group_elements_cache,
             return_metadata=True,
         )
         if benchmark:
@@ -261,7 +291,12 @@ def run_pipeline(
             if rows >= M_target and len(selected_points) >= required_min_points:
                 break
 
-        fallback_used = cutoff_fallback or sampling_meta.get("fallback_used", False) or geom_fallback or ghost_meta.get("fallback_used", False)
+        fallback_used = (
+            cutoff_fallback
+            or sampling_meta.get("fallback_used", False)
+            or geom_fallback_base
+            or ghost_meta.get("fallback_used", False)
+        )
 
         if not selected_points:
             LOGGER.warning("No viable points retained for k=%.3f; marking NaN chi^2.", k)
@@ -503,6 +538,12 @@ def parse_args():
         action="store_true",
         help="Clear special function caches after each k value (reduces memory at cost of performance)",
     )
+    parser.add_argument(
+        "--dump-point-diagnostics",
+        type=str,
+        default=None,
+        help="Write per-point Dirichlet diagnostics JSON to this path (relative to output directory if not absolute)",
+    )
     return parser.parse_args()
 
 
@@ -560,6 +601,13 @@ def _run_main_logic(args):
         # Update output directory to include chunk index
         output_dir = output_dir / f"chunk_{args.k_chunk_index}"
     
+    point_diagnostics_path = None
+    if args.dump_point_diagnostics:
+        diag_candidate = Path(args.dump_point_diagnostics)
+        if not diag_candidate.is_absolute():
+            diag_candidate = output_dir / diag_candidate
+        point_diagnostics_path = diag_candidate
+
     LOGGER.info("Running pipeline for k in [%s, %s] (%s samples)", 
                 k_values[0] if len(k_values) > 0 else args.k_min, 
                 k_values[-1] if len(k_values) > 0 else args.k_max, 
@@ -583,6 +631,7 @@ def _run_main_logic(args):
         no_plot=args.no_plot,
         no_eigenvalues=args.no_eigenvalues,
         clear_caches_per_k=args.clear_caches_per_k,
+        point_diagnostics_path=point_diagnostics_path,
     )
     if args.self_check_strict and not result["report"]["ok"]:
         raise SystemExit(1)
