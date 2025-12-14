@@ -54,10 +54,20 @@ def solve_system_via_svd_numeric(A, n_smallest: int = 3, normalize_rows: bool = 
     chi_squared = compute_chi2(A, s, Vt, definition=chi2_definition, n_smallest=n_smallest)
 
     # Compute diagnostics
+    # Estimate numerical rank using tolerance relative to largest singular value
+    rank_tolerance = 1e-10
+    if len(s) > 0 and s[0] > 0:
+        numerical_rank = int(np.sum(s > rank_tolerance * s[0]))
+    else:
+        numerical_rank = 0
+    
     diagnostics = {
         'sigma_min': float(s.min()) if len(s) > 0 else np.nan,
         'sigma_max': float(s.max()) if len(s) > 0 else np.nan,
         'all_singular_values': s.tolist(),
+        'first_10_singular_values': s[:min(10, len(s))].tolist(),
+        'numerical_rank': numerical_rank,
+        'rank_tolerance': rank_tolerance,
     }
 
     end_time = time.time()  # End timing
