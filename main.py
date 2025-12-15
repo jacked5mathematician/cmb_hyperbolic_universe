@@ -26,6 +26,7 @@ from utils import (
 from utils.eigenvalues import extract_eigenvalues_from_spectrum
 from utils.ghosts import get_group_elements
 from utils.points import DEFAULT_FALLBACK_RADIUS
+from utils.rho_adaptive import adaptive_rho_images, adaptive_rho_rank, AdaptiveRhoResult
 from utils.transformations import (
     apply_so31_action,
     klein_to_poincare,
@@ -138,6 +139,14 @@ def run_pipeline(
     no_eigenvalues: bool = False,
     clear_caches_per_k: bool = False,
     point_diagnostics_path: Path | None = None,
+    # Adaptive rho window parameters
+    rho_window_mode: str = "paper",
+    rho_expand_step: float = 0.25,
+    rho_max_cap: float = 6.0,
+    adaptive_target_median_images: int = 10,
+    adaptive_target_rank_frac: float = 0.7,
+    adaptive_target_nullity: int = 50,
+    dump_A_matrices: bool = False,
 ) -> Dict:
     import time
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -213,6 +222,16 @@ def run_pipeline(
     A_max_abs_arr: List[float] = []
     A_min_nonzero_arr: List[float] = []
     images_per_point_arr: List[float] = []
+    
+    # Adaptive rho diagnostics
+    rho_max_original_arr: List[float] = []
+    adaptive_expansions_arr: List[int] = []
+    adaptive_stopped_by_arr: List[str] = []
+    
+    # A matrix storage (if requested)
+    A_matrices_dir = output_dir / "A_matrices" if dump_A_matrices else None
+    if A_matrices_dir:
+        A_matrices_dir.mkdir(parents=True, exist_ok=True)
 
     for k in k_values:
         L = _paper_L(k)
@@ -225,6 +244,48 @@ def run_pipeline(
         rho_min, rho_max, cutoff_fallback = compute_rho_cutoffs(k, L, l_min)
         if benchmark:
             timings.setdefault("cutoff_computation", []).append(time.perf_counter() - t0)
+        
+        rho_max_original = rho_max  # Store paper-faithful value
+        adaptive_result = None
+        
+        # Apply adaptive rho window if requested
+        if rho_window_mode == "adaptive_images":
+            adaptive_result = adaptive_rho_images(
+                k, L, l_min, manifold_name, base_points,
+                target_median_images=adaptive_target_median_images,
+                expand_step=rho_expand_step,
+                rho_max_cap=rho_max_cap,
+                min_images=10,
+                max_word_length=max_word_length,
+            )
+            rho_min = adaptive_result.rho_min
+            rho_max = adaptive_result.rho_max
+            LOGGER.info(
+                "k=%.3f adaptive_images: rho_max expanded %.3f -> %.3f (%d steps, %s)",
+                k, rho_max_original, rho_max, adaptive_result.expansions, adaptive_result.stopped_by
+            )
+        elif rho_window_mode == "adaptive_rank":
+            # Create a matrix builder lambda for adaptive_rank
+            def _matrix_builder_for_adaptive(k_val, L_val, l_min_val, pts_imgs):
+                M_build, N_build, A_build = generate_matrix_system(pts_imgs, L_val, k_val)
+                return A_build, M_build, N_build
+            
+            adaptive_result = adaptive_rho_rank(
+                k, L, l_min, manifold_name, base_points,
+                matrix_builder=_matrix_builder_for_adaptive,
+                target_rank_frac=adaptive_target_rank_frac,
+                target_nullity=adaptive_target_nullity,
+                expand_step=rho_expand_step,
+                rho_max_cap=rho_max_cap,
+                min_images=10,
+                max_word_length=max_word_length,
+            )
+            rho_min = adaptive_result.rho_min
+            rho_max = adaptive_result.rho_max
+            LOGGER.info(
+                "k=%.3f adaptive_rank: rho_max expanded %.3f -> %.3f (%d steps, %s)",
+                k, rho_max_original, rho_max, adaptive_result.expansions, adaptive_result.stopped_by
+            )
         
         LOGGER.info(
             "k=%.3f -> L=%s c=%s l_min=%s rho_min=%.3f rho_max=%.3f M_target=%s",
@@ -254,6 +315,9 @@ def run_pipeline(
             A_max_abs_arr.append(np.nan)
             A_min_nonzero_arr.append(np.nan)
             images_per_point_arr.append(np.nan)
+            rho_max_original_arr.append(rho_max_original)
+            adaptive_expansions_arr.append(adaptive_result.expansions if adaptive_result else 0)
+            adaptive_stopped_by_arr.append(adaptive_result.stopped_by if adaptive_result else "paper")
             continue
 
         t0 = time.perf_counter() if benchmark else None
@@ -316,6 +380,9 @@ def run_pipeline(
             A_max_abs_arr.append(np.nan)
             A_min_nonzero_arr.append(np.nan)
             images_per_point_arr.append(np.nan)
+            rho_max_original_arr.append(rho_max_original)
+            adaptive_expansions_arr.append(adaptive_result.expansions if adaptive_result else 0)
+            adaptive_stopped_by_arr.append(adaptive_result.stopped_by if adaptive_result else "paper")
             continue
 
         t0 = time.perf_counter() if benchmark else None
@@ -325,6 +392,12 @@ def run_pipeline(
             M, N_check, A = generate_matrix_system(selected_points, L, k)
         if benchmark:
             timings.setdefault("matrix_build", []).append(time.perf_counter() - t0)
+        
+        # Dump A matrix if requested
+        if A_matrices_dir is not None:
+            A_file = A_matrices_dir / f"A_k{k:.4f}.npz"
+            np.savez_compressed(A_file, A=A, k=k, L=L, M=M, N=N_check)
+            LOGGER.debug("Saved A matrix to %s", A_file)
         
         if N_check != N:
             self_check_issues.append(f"N mismatch for k={k}: expected {N}, got {N_check}")
@@ -355,6 +428,15 @@ def run_pipeline(
         kept_points_arr.append(len(selected_points))
         fallback_arr.append(fallback_used)
         M_target_arr.append(M_target)
+        
+        # Adaptive rho diagnostics
+        rho_max_original_arr.append(rho_max_original)
+        if adaptive_result is not None:
+            adaptive_expansions_arr.append(adaptive_result.expansions)
+            adaptive_stopped_by_arr.append(adaptive_result.stopped_by)
+        else:
+            adaptive_expansions_arr.append(0)
+            adaptive_stopped_by_arr.append("paper")
 
         if self_check:
             if dirichlet_checker:
@@ -389,6 +471,9 @@ def run_pipeline(
         "A_max_abs": np.array(A_max_abs_arr, dtype=float),
         "A_min_nonzero": np.array(A_min_nonzero_arr, dtype=float),
         "images_per_point": np.array(images_per_point_arr, dtype=float),
+        # Adaptive rho diagnostics
+        "rho_max_original": np.array(rho_max_original_arr, dtype=float),
+        "adaptive_expansions": np.array(adaptive_expansions_arr, dtype=int),
     }
 
     spectrum_path = _save_spectrum(output_dir, k_values, chi2_ranks, meta_arrays)
@@ -544,6 +629,51 @@ def parse_args():
         default=None,
         help="Write per-point Dirichlet diagnostics JSON to this path (relative to output directory if not absolute)",
     )
+    # --- Adaptive rho window arguments ---
+    parser.add_argument(
+        "--rho-window-mode",
+        type=str,
+        choices=["paper", "adaptive_images", "adaptive_rank"],
+        default="paper",
+        help="Rho window strategy: 'paper' (default, fixed paper-faithful), "
+             "'adaptive_images' (expand until target median images), "
+             "'adaptive_rank' (expand until target rank fraction)",
+    )
+    parser.add_argument(
+        "--rho-expand-step",
+        type=float,
+        default=0.25,
+        help="Step size for adaptive rho window expansion (default: 0.25)",
+    )
+    parser.add_argument(
+        "--rho-max-cap",
+        type=float,
+        default=6.0,
+        help="Hard cap on rho_max for adaptive modes (default: 6.0)",
+    )
+    parser.add_argument(
+        "--adaptive-target-median-images",
+        type=int,
+        default=10,
+        help="Target median images per point for adaptive_images mode (default: 10)",
+    )
+    parser.add_argument(
+        "--adaptive-target-rank-frac",
+        type=float,
+        default=0.7,
+        help="Target rank/N fraction for adaptive_rank mode (default: 0.7)",
+    )
+    parser.add_argument(
+        "--adaptive-target-nullity",
+        type=int,
+        default=50,
+        help="Target nullity (N-rank) for adaptive_rank mode (default: 50)",
+    )
+    parser.add_argument(
+        "--dump-A-matrices",
+        action="store_true",
+        help="Export A matrices for each k value (for debugging A(k) structure)",
+    )
     return parser.parse_args()
 
 
@@ -632,6 +762,14 @@ def _run_main_logic(args):
         no_eigenvalues=args.no_eigenvalues,
         clear_caches_per_k=args.clear_caches_per_k,
         point_diagnostics_path=point_diagnostics_path,
+        # Adaptive rho window parameters
+        rho_window_mode=args.rho_window_mode,
+        rho_expand_step=args.rho_expand_step,
+        rho_max_cap=args.rho_max_cap,
+        adaptive_target_median_images=args.adaptive_target_median_images,
+        adaptive_target_rank_frac=args.adaptive_target_rank_frac,
+        adaptive_target_nullity=args.adaptive_target_nullity,
+        dump_A_matrices=args.dump_A_matrices,
     )
     if args.self_check_strict and not result["report"]["ok"]:
         raise SystemExit(1)
