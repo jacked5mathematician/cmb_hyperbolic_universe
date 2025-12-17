@@ -1,9 +1,10 @@
 import argparse
+import csv
 import json
 import logging
 import os
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 import matplotlib
 
@@ -26,7 +27,7 @@ from utils import (
 from utils.eigenvalues import extract_eigenvalues_from_spectrum
 from utils.ghosts import get_group_elements
 from utils.points import DEFAULT_FALLBACK_RADIUS
-from utils.rho_adaptive import adaptive_rho_images, adaptive_rho_rank, AdaptiveRhoResult
+from utils.rho_adaptive import adaptive_rho_images, adaptive_rho_rank, AdaptiveRhoResult, compute_svd_health
 from utils.transformations import (
     apply_so31_action,
     klein_to_poincare,
@@ -37,6 +38,72 @@ from utils.transformations import (
 LOGGER = logging.getLogger("pipeline")
 PAPER_L_MIN = 5
 MAX_RANKS = 5
+
+
+def _farthest_point_sampling(points: np.ndarray, n_select: int, seed: int = 0) -> np.ndarray:
+    """Select n_select diverse points via greedy farthest-point sampling.
+    
+    Args:
+        points: Array of shape (N, D) containing candidate points.
+        n_select: Number of points to select.
+        seed: Random seed for initial point selection.
+        
+    Returns:
+        Array of selected point indices.
+    """
+    rng = np.random.default_rng(seed)
+    n_total = len(points)
+    if n_select >= n_total:
+        return np.arange(n_total)
+    
+    selected = [rng.integers(n_total)]
+    min_distances = np.full(n_total, np.inf)
+    
+    for _ in range(n_select - 1):
+        # Update min distances to selected set
+        last_selected = points[selected[-1]]
+        dists = np.linalg.norm(points - last_selected, axis=1)
+        min_distances = np.minimum(min_distances, dists)
+        
+        # Select point with maximum minimum distance
+        min_distances[selected] = -np.inf  # Exclude already selected
+        next_idx = np.argmax(min_distances)
+        selected.append(next_idx)
+    
+    return np.array(selected)
+
+
+def _compute_gram_diagnostics(A: np.ndarray, tau: float) -> Dict:
+    """Compute Gram matrix (A^T A) eigenvalue diagnostics.
+    
+    Args:
+        A: Matrix of shape (M, N)
+        tau: Numerical threshold for singular values
+        
+    Returns:
+        Dictionary with Gram eigenvalue diagnostics.
+    """
+    G = A.T @ A
+    eigvals = np.linalg.eigvalsh(G)  # Returns sorted ascending
+    eigvals = np.sort(eigvals)[::-1]  # Sort descending for consistency
+    
+    # tau^2 is the threshold for eigenvalues (since λ = σ²)
+    tau_sq = tau ** 2
+    
+    # Fraction below 5*tau^2
+    frac_below_5tau_sq = float(np.sum(eigvals <= 5 * tau_sq)) / len(eigvals) if len(eigvals) > 0 else 1.0
+    
+    # Smallest 20 and largest 5
+    smallest_20 = eigvals[-20:].tolist() if len(eigvals) >= 20 else eigvals.tolist()
+    largest_5 = eigvals[:5].tolist() if len(eigvals) >= 5 else eigvals.tolist()
+    
+    return {
+        'eigvals': eigvals,
+        'frac_below_5tau_sq': frac_below_5tau_sq,
+        'smallest_20': smallest_20,
+        'largest_5': largest_5,
+        'tau_sq': tau_sq,
+    }
 
 
 def _paper_L(k: float) -> int:
@@ -143,10 +210,15 @@ def run_pipeline(
     rho_window_mode: str = "paper",
     rho_expand_step: float = 0.25,
     rho_max_cap: float = 6.0,
-    adaptive_target_median_images: int = 10,
+    adaptive_target_q10_images: int = 10,
+    adaptive_max_drop_fraction: float = 0.3,
     adaptive_target_rank_frac: float = 0.7,
     adaptive_target_nullity: int = 50,
+    adaptive_require_healthy: bool = True,
     dump_A_matrices: bool = False,
+    # Extended diagnostics
+    extended_diagnostics: bool = False,
+    diversity_fps: int | None = None,
 ) -> Dict:
     import time
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -168,6 +240,16 @@ def run_pipeline(
         base_points_pseudo[:, 0].mean(),
         sampling_meta.get("fallback_used"),
     )
+    
+    # Apply diversity FPS selection if requested
+    if diversity_fps is not None and diversity_fps < len(base_points):
+        LOGGER.info("Applying farthest-point sampling to select %d diverse points from %d", 
+                    diversity_fps, len(base_points))
+        selected_indices = _farthest_point_sampling(base_points, diversity_fps, seed=seed)
+        base_points = base_points[selected_indices]
+        base_points_pseudo = base_points_pseudo[selected_indices]
+        LOGGER.info("Selected %d points via FPS (mean rho=%.3f)", 
+                    len(base_points), base_points_pseudo[:, 0].mean())
 
     group_elements_cache, geom_fallback_base = get_group_elements(manifold_name, max_word_length)
 
@@ -228,6 +310,21 @@ def run_pipeline(
     adaptive_expansions_arr: List[int] = []
     adaptive_stopped_by_arr: List[str] = []
     
+    # SVD health diagnostics
+    tau_arr: List[float] = []
+    condition_number_arr: List[float] = []
+    numerical_rank_arr: List[int] = []
+    nullity_arr: List[int] = []
+    frac_below_5tau_arr: List[float] = []
+    svd_healthy_arr: List[bool] = []
+    sigma_2_arr: List[float] = []
+    
+    # Extended diagnostics storage
+    extended_diag_rows: List[Dict] = []  # For CSV output
+    gram_eigvals_dir = output_dir / "gram_eigvals" if extended_diagnostics else None
+    if gram_eigvals_dir:
+        gram_eigvals_dir.mkdir(parents=True, exist_ok=True)
+    
     # A matrix storage (if requested)
     A_matrices_dir = output_dir / "A_matrices" if dump_A_matrices else None
     if A_matrices_dir:
@@ -252,7 +349,8 @@ def run_pipeline(
         if rho_window_mode == "adaptive_images":
             adaptive_result = adaptive_rho_images(
                 k, L, l_min, manifold_name, base_points,
-                target_median_images=adaptive_target_median_images,
+                target_q10_images=adaptive_target_q10_images,
+                max_drop_fraction=adaptive_max_drop_fraction,
                 expand_step=rho_expand_step,
                 rho_max_cap=rho_max_cap,
                 min_images=10,
@@ -261,8 +359,9 @@ def run_pipeline(
             rho_min = adaptive_result.rho_min
             rho_max = adaptive_result.rho_max
             LOGGER.info(
-                "k=%.3f adaptive_images: rho_max expanded %.3f -> %.3f (%d steps, %s)",
-                k, rho_max_original, rho_max, adaptive_result.expansions, adaptive_result.stopped_by
+                "k=%.3f adaptive_images: rho_max %.3f -> %.3f (%d steps, %s), kept=%d, drop=%.1f%%",
+                k, rho_max_original, rho_max, adaptive_result.expansions, adaptive_result.stopped_by,
+                adaptive_result.kept_points, adaptive_result.drop_fraction * 100
             )
         elif rho_window_mode == "adaptive_rank":
             # Create a matrix builder lambda for adaptive_rank
@@ -279,12 +378,16 @@ def run_pipeline(
                 rho_max_cap=rho_max_cap,
                 min_images=10,
                 max_word_length=max_word_length,
+                require_healthy=adaptive_require_healthy,
             )
             rho_min = adaptive_result.rho_min
             rho_max = adaptive_result.rho_max
+            svd_info = adaptive_result.svd_health or {}
             LOGGER.info(
-                "k=%.3f adaptive_rank: rho_max expanded %.3f -> %.3f (%d steps, %s)",
-                k, rho_max_original, rho_max, adaptive_result.expansions, adaptive_result.stopped_by
+                "k=%.3f adaptive_rank: rho_max %.3f -> %.3f (%d steps, %s), "
+                "σ_min=%.2e, τ=%.2e, healthy=%s",
+                k, rho_max_original, rho_max, adaptive_result.expansions, adaptive_result.stopped_by,
+                svd_info.get('sigma_min', 0), svd_info.get('tau', 0), svd_info.get('healthy', False)
             )
         
         LOGGER.info(
@@ -318,6 +421,13 @@ def run_pipeline(
             rho_max_original_arr.append(rho_max_original)
             adaptive_expansions_arr.append(adaptive_result.expansions if adaptive_result else 0)
             adaptive_stopped_by_arr.append(adaptive_result.stopped_by if adaptive_result else "paper")
+            # SVD health
+            tau_arr.append(np.nan)
+            condition_number_arr.append(np.nan)
+            numerical_rank_arr.append(0)
+            nullity_arr.append(0)
+            frac_below_5tau_arr.append(np.nan)
+            svd_healthy_arr.append(False)
             continue
 
         t0 = time.perf_counter() if benchmark else None
@@ -383,6 +493,45 @@ def run_pipeline(
             rho_max_original_arr.append(rho_max_original)
             adaptive_expansions_arr.append(adaptive_result.expansions if adaptive_result else 0)
             adaptive_stopped_by_arr.append(adaptive_result.stopped_by if adaptive_result else "paper")
+            # SVD health
+            tau_arr.append(np.nan)
+            condition_number_arr.append(np.nan)
+            numerical_rank_arr.append(0)
+            nullity_arr.append(0)
+            frac_below_5tau_arr.append(np.nan)
+            svd_healthy_arr.append(False)
+            sigma_2_arr.append(np.nan)
+            
+            # Extended diagnostics: record failure row
+            if extended_diagnostics:
+                diag_row = {
+                    'k': k,
+                    'chi2_rank1': np.nan,
+                    'M': 0,
+                    'N': N,
+                    'kept_points': 0,
+                    'total_images': 0,
+                    'images_per_point': np.nan,
+                    'sigma_min': np.nan,
+                    'sigma_2': np.nan,
+                    'sigma_max': np.nan,
+                    'tau': np.nan,
+                    'condition_number': np.nan,
+                    'below_tau': -1,  # sentinel for "no data"
+                    'numerical_rank': 0,
+                    'nullity': 0,
+                    'frac_below_5tau': np.nan,
+                    'gram_frac_below_5tau_sq': np.nan,
+                    'gram_smallest_20': '[]',
+                    'gram_largest_5': '[]',
+                    'rho_min': rho_min,
+                    'rho_max': rho_max,
+                    'rho_max_original': rho_max_original,
+                    'adaptive_expansions': adaptive_result.expansions if adaptive_result else 0,
+                    'failure_reason': 'no_viable_points',
+                }
+                extended_diag_rows.append(diag_row)
+            
             continue
 
         t0 = time.perf_counter() if benchmark else None
@@ -437,6 +586,55 @@ def run_pipeline(
         else:
             adaptive_expansions_arr.append(0)
             adaptive_stopped_by_arr.append("paper")
+        
+        # SVD health diagnostics
+        svd_health = compute_svd_health(A, store_singular_values=extended_diagnostics)
+        tau_arr.append(svd_health.tau)
+        condition_number_arr.append(svd_health.condition_number)
+        numerical_rank_arr.append(svd_health.numerical_rank)
+        nullity_arr.append(svd_health.nullity)
+        frac_below_5tau_arr.append(svd_health.frac_below_5tau)
+        svd_healthy_arr.append(svd_health.healthy)
+        sigma_2_arr.append(svd_health.sigma_2)
+        
+        # Extended diagnostics: Gram eigenvalues and CSV row
+        if extended_diagnostics:
+            gram_diag = _compute_gram_diagnostics(A, svd_health.tau)
+            
+            # Save Gram eigenvalues
+            if gram_eigvals_dir:
+                eig_file = gram_eigvals_dir / f"eig_k_{k:.4f}.npy"
+                np.save(eig_file, gram_diag['eigvals'])
+            
+            # Build CSV row
+            total_images = sum(len(imgs) for imgs in selected_points)
+            diag_row = {
+                'k': k,
+                'chi2_rank1': chi2_ranks[0][-1],
+                'M': M,
+                'N': N,
+                'kept_points': len(selected_points),
+                'total_images': total_images,
+                'images_per_point': images_per_point_arr[-1],
+                'sigma_min': svd_health.sigma_min,
+                'sigma_2': svd_health.sigma_2,
+                'sigma_max': svd_health.sigma_max,
+                'tau': svd_health.tau,
+                'condition_number': svd_health.condition_number,
+                'below_tau': int(svd_health.sigma_min < svd_health.tau),
+                'numerical_rank': svd_health.numerical_rank,
+                'nullity': svd_health.nullity,
+                'frac_below_5tau': svd_health.frac_below_5tau,
+                'gram_frac_below_5tau_sq': gram_diag['frac_below_5tau_sq'],
+                'gram_smallest_20': str(gram_diag['smallest_20']),
+                'gram_largest_5': str(gram_diag['largest_5']),
+                'rho_min': rho_min,
+                'rho_max': rho_max,
+                'rho_max_original': rho_max_original,
+                'adaptive_expansions': adaptive_expansions_arr[-1],
+                'failure_reason': '',
+            }
+            extended_diag_rows.append(diag_row)
 
         if self_check:
             if dirichlet_checker:
@@ -467,6 +665,7 @@ def run_pipeline(
         "M_target": np.array(M_target_arr, dtype=int),
         "sigma_min": np.array(sigma_min_arr, dtype=float),
         "sigma_max": np.array(sigma_max_arr, dtype=float),
+        "sigma_2": np.array(sigma_2_arr, dtype=float),
         "A_frobenius": np.array(A_frobenius_arr, dtype=float),
         "A_max_abs": np.array(A_max_abs_arr, dtype=float),
         "A_min_nonzero": np.array(A_min_nonzero_arr, dtype=float),
@@ -474,12 +673,28 @@ def run_pipeline(
         # Adaptive rho diagnostics
         "rho_max_original": np.array(rho_max_original_arr, dtype=float),
         "adaptive_expansions": np.array(adaptive_expansions_arr, dtype=int),
+        # SVD health diagnostics
+        "tau": np.array(tau_arr, dtype=float),
+        "condition_number": np.array(condition_number_arr, dtype=float),
+        "numerical_rank": np.array(numerical_rank_arr, dtype=int),
+        "nullity": np.array(nullity_arr, dtype=int),
+        "frac_below_5tau": np.array(frac_below_5tau_arr, dtype=float),
+        "svd_healthy": np.array(svd_healthy_arr, dtype=bool),
     }
 
     spectrum_path = _save_spectrum(output_dir, k_values, chi2_ranks, meta_arrays)
     plot_path = None
     if not no_plot:
         plot_path = _plot_spectrum(output_dir, k_values, chi2_ranks)
+    
+    # Write extended diagnostics CSV
+    if extended_diagnostics and extended_diag_rows:
+        csv_path = output_dir / "svd_diag.csv"
+        with open(csv_path, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=extended_diag_rows[0].keys())
+            writer.writeheader()
+            writer.writerows(extended_diag_rows)
+        LOGGER.info("Wrote extended diagnostics to %s", csv_path)
 
     report = {"ok": len(self_check_issues) == 0, "issues": self_check_issues}
     if self_check:
@@ -636,8 +851,8 @@ def parse_args():
         choices=["paper", "adaptive_images", "adaptive_rank"],
         default="paper",
         help="Rho window strategy: 'paper' (default, fixed paper-faithful), "
-             "'adaptive_images' (expand until target median images), "
-             "'adaptive_rank' (expand until target rank fraction)",
+             "'adaptive_images' (expand until Q10 images target met), "
+             "'adaptive_rank' (expand until target rank fraction with health gate)",
     )
     parser.add_argument(
         "--rho-expand-step",
@@ -652,10 +867,16 @@ def parse_args():
         help="Hard cap on rho_max for adaptive modes (default: 6.0)",
     )
     parser.add_argument(
-        "--adaptive-target-median-images",
+        "--adaptive-target-q10-images",
         type=int,
         default=10,
-        help="Target median images per point for adaptive_images mode (default: 10)",
+        help="Target Q10 (10th percentile) images per point for adaptive_images mode (default: 10)",
+    )
+    parser.add_argument(
+        "--adaptive-max-drop-fraction",
+        type=float,
+        default=0.3,
+        help="Maximum fraction of points that can be dropped for adaptive_images mode (default: 0.3)",
     )
     parser.add_argument(
         "--adaptive-target-rank-frac",
@@ -670,9 +891,26 @@ def parse_args():
         help="Target nullity (N-rank) for adaptive_rank mode (default: 50)",
     )
     parser.add_argument(
+        "--adaptive-require-healthy",
+        action="store_true",
+        default=True,
+        help="Require σ_min > τ for adaptive_rank target_met (default: True)",
+    )
+    parser.add_argument(
         "--dump-A-matrices",
         action="store_true",
         help="Export A matrices for each k value (for debugging A(k) structure)",
+    )
+    parser.add_argument(
+        "--extended-diagnostics",
+        action="store_true",
+        help="Enable extended diagnostics: write svd_diag.csv and Gram eigenvalues per k",
+    )
+    parser.add_argument(
+        "--diversity-fps",
+        type=int,
+        default=None,
+        help="Use farthest-point sampling to select this many diverse base points (experimental)",
     )
     return parser.parse_args()
 
@@ -766,10 +1004,15 @@ def _run_main_logic(args):
         rho_window_mode=args.rho_window_mode,
         rho_expand_step=args.rho_expand_step,
         rho_max_cap=args.rho_max_cap,
-        adaptive_target_median_images=args.adaptive_target_median_images,
+        adaptive_target_q10_images=args.adaptive_target_q10_images,
+        adaptive_max_drop_fraction=args.adaptive_max_drop_fraction,
         adaptive_target_rank_frac=args.adaptive_target_rank_frac,
         adaptive_target_nullity=args.adaptive_target_nullity,
+        adaptive_require_healthy=args.adaptive_require_healthy,
         dump_A_matrices=args.dump_A_matrices,
+        # Extended diagnostics
+        extended_diagnostics=args.extended_diagnostics,
+        diversity_fps=args.diversity_fps,
     )
     if args.self_check_strict and not result["report"]["ok"]:
         raise SystemExit(1)
