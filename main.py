@@ -73,6 +73,101 @@ def _farthest_point_sampling(points: np.ndarray, n_select: int, seed: int = 0) -
     return np.array(selected)
 
 
+def _feature_space_qr_selection(points: np.ndarray, L: int, k: float, n_select: int) -> np.ndarray:
+    """Select n_select diverse points via feature-space pivoted QR.
+    
+    Construct a feature matrix B where row i is the basis evaluation vector
+    at point i, normalize rows to unit norm, then use pivoted QR on B^T
+    to select points that span the function space well.
+    
+    Args:
+        points: Array of shape (N, 3) containing candidate points in Poincaré coordinates.
+        L: Maximum angular momentum for basis.
+        k: Wavenumber for basis evaluation.
+        n_select: Number of points to select.
+        
+    Returns:
+        Array of selected point indices.
+    """
+    from utils.special_functions import Q_k_lm_vectorized
+    
+    n_total = len(points)
+    if n_select >= n_total:
+        return np.arange(n_total)
+    
+    N_basis = (L + 1) ** 2
+    
+    # Build feature matrix B: each row is basis evaluation at a point
+    # Convert Poincaré to (rho, theta, phi) for basis evaluation
+    r = np.linalg.norm(points, axis=1)
+    r = np.clip(r, 1e-15, 1.0 - 1e-10)  # Avoid singularities
+    rho = np.arctanh(r)
+    
+    # theta = arccos(z/r), phi = arctan2(y, x)
+    theta = np.arccos(np.clip(points[:, 2] / (r + 1e-15), -1.0, 1.0))
+    phi = np.arctan2(points[:, 1], points[:, 0])
+    
+    # Evaluate basis functions at all points
+    # Q_k_lm_vectorized expects (k_value, lm_pairs, images_array)
+    # where images_array has shape (n_points, 3) with columns (rho, theta, phi)
+    lm_pairs = [(l, m) for l in range(L + 1) for m in range(-l, l + 1)]
+    images_array = np.column_stack([rho, theta, phi])
+    
+    Q_vals = Q_k_lm_vectorized(k, lm_pairs, images_array)  # shape: (n_points, N_basis)
+    B = Q_vals.real  # Take real part for QR
+    
+    # Normalize rows to unit norm
+    row_norms = np.linalg.norm(B, axis=1, keepdims=True)
+    row_norms = np.where(row_norms > 1e-15, row_norms, 1.0)  # Avoid division by zero
+    B_normalized = B / row_norms
+    
+    # Pivoted QR on B^T to find most linearly independent rows
+    # numpy doesn't have pivoting, so we use a greedy approach:
+    # Select row that maximizes volume increase (leverage score proxy)
+    
+    selected = []
+    remaining = set(range(n_total))
+    
+    # Start with row having largest norm (most "informative")
+    norms = np.linalg.norm(B_normalized, axis=1)
+    first_idx = np.argmax(norms)
+    selected.append(first_idx)
+    remaining.remove(first_idx)
+    
+    # Greedy selection: pick point that adds most to span
+    Q_current = B_normalized[first_idx:first_idx+1, :].T  # Column vector
+    Q_current = Q_current / (np.linalg.norm(Q_current) + 1e-15)
+    
+    for _ in range(n_select - 1):
+        if not remaining:
+            break
+        
+        best_idx = None
+        best_residual_norm = -1
+        
+        remaining_list = list(remaining)
+        candidates = B_normalized[remaining_list, :]
+        
+        # Project each candidate onto current span and find residual
+        projections = candidates @ Q_current @ Q_current.T
+        residuals = candidates - projections
+        residual_norms = np.linalg.norm(residuals, axis=1)
+        
+        best_local_idx = np.argmax(residual_norms)
+        best_idx = remaining_list[best_local_idx]
+        best_residual = residuals[best_local_idx]
+        
+        selected.append(best_idx)
+        remaining.remove(best_idx)
+        
+        # Update Q by adding the new direction (Gram-Schmidt)
+        if np.linalg.norm(best_residual) > 1e-15:
+            new_q = best_residual / np.linalg.norm(best_residual)
+            Q_current = np.column_stack([Q_current, new_q.reshape(-1, 1)])
+    
+    return np.array(selected)
+
+
 def _compute_gram_diagnostics(A: np.ndarray, tau: float) -> Dict:
     """Compute Gram matrix (A^T A) eigenvalue diagnostics.
     
@@ -219,6 +314,7 @@ def run_pipeline(
     # Extended diagnostics
     extended_diagnostics: bool = False,
     diversity_fps: int | None = None,
+    diversity_feature_qr: int | None = None,
 ) -> Dict:
     import time
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -250,6 +346,12 @@ def run_pipeline(
         base_points_pseudo = base_points_pseudo[selected_indices]
         LOGGER.info("Selected %d points via FPS (mean rho=%.3f)", 
                     len(base_points), base_points_pseudo[:, 0].mean())
+    
+    # Apply feature-space QR selection if requested (deferred until we know L)
+    # We'll handle this after computing L for the first k value
+    feature_qr_pending = diversity_feature_qr is not None and diversity_feature_qr < len(base_points)
+    original_base_points = base_points.copy() if feature_qr_pending else None
+    original_base_points_pseudo = base_points_pseudo.copy() if feature_qr_pending else None
 
     group_elements_cache, geom_fallback_base = get_group_elements(manifold_name, max_word_length)
 
@@ -336,6 +438,19 @@ def run_pipeline(
         c_val = _paper_c(k)
         N = (L + 1) ** 2
         M_target = _target_M(L, c_val)
+        
+        # Apply feature-space QR selection if pending (first k only, since L depends on k)
+        if feature_qr_pending and original_base_points is not None:
+            LOGGER.info("Applying feature-space QR selection to select %d diverse points from %d (L=%d, k=%.3f)", 
+                        diversity_feature_qr, len(original_base_points), L, k)
+            selected_indices = _feature_space_qr_selection(
+                original_base_points, L, k, diversity_feature_qr
+            )
+            base_points = original_base_points[selected_indices]
+            base_points_pseudo = original_base_points_pseudo[selected_indices]
+            LOGGER.info("Selected %d points via feature-QR (mean rho=%.3f)", 
+                        len(base_points), base_points_pseudo[:, 0].mean())
+            feature_qr_pending = False  # Only apply once
         
         t0 = time.perf_counter() if benchmark else None
         rho_min, rho_max, cutoff_fallback = compute_rho_cutoffs(k, L, l_min)
@@ -912,6 +1027,12 @@ def parse_args():
         default=None,
         help="Use farthest-point sampling to select this many diverse base points (experimental)",
     )
+    parser.add_argument(
+        "--diversity-feature-qr",
+        type=int,
+        default=None,
+        help="Use feature-space pivoted QR to select this many diverse base points (experimental)",
+    )
     return parser.parse_args()
 
 
@@ -1013,6 +1134,7 @@ def _run_main_logic(args):
         # Extended diagnostics
         extended_diagnostics=args.extended_diagnostics,
         diversity_fps=args.diversity_fps,
+        diversity_feature_qr=args.diversity_feature_qr,
     )
     if args.self_check_strict and not result["report"]["ok"]:
         raise SystemExit(1)

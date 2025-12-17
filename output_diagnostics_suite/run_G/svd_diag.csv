@@ -1,0 +1,2 @@
+k,chi2_rank1,M,N,kept_points,total_images,images_per_point,sigma_min,sigma_2,sigma_max,tau,condition_number,below_tau,numerical_rank,nullity,frac_below_5tau,gram_frac_below_5tau_sq,gram_smallest_20,gram_largest_5,rho_min,rho_max,rho_max_original,adaptive_expansions,failure_reason
+9.8,nan,0,400,0,0,nan,nan,nan,nan,nan,nan,-1,0,0,nan,nan,[],[],1.2401655044260897,1.839558389849811,1.839558389849811,0,no_viable_points

@@ -1,42 +1,57 @@
 #!/usr/bin/env python3
-"""
-Run all three rho window modes and generate a comparison report.
+"""Run all three rho window modes and generate a comparison report.
 
-Usage:
-    python scripts/run_rho_adaptive_comparison.py [--k-min 1.0] [--k-max 10.0] [--num-k 400] [--n-points 40]
+This script is intended for *local smoke tests* (small num-k) and for driving
+HPC chunked runs via main.py's built-in k-chunking:
 
-This script:
-1. Runs the pipeline in paper mode (baseline, expected to fail at high k)
-2. Runs adaptive_images mode (expand rho_max for more images)
-3. Runs adaptive_rank mode (expand rho_max for better rank)
-4. Generates REPORT_RHO_ADAPTIVE.md with comparison tables
+    main.py --k-chunk-index i --k-num-chunks N
+
+For full 400-k runs on HPC, prefer:
+    1) run per-mode/per-chunk jobs that write:
+                <base>/<mode>/chunk_<i>/spectrum.npz
+    2) combine them into a report with:
+                python scripts/combine_rho_adaptive_chunks.py --base-dir <base>
 """
 
 from __future__ import annotations
-
 import argparse
-import json
-import logging
 import subprocess
 import sys
+import tempfile
+from dataclasses import dataclass
 from pathlib import Path
-from datetime import datetime
-
 import numpy as np
 
-LOGGER = logging.getLogger(__name__)
+K_BAND_EDGES = [1.0, 3.0, 5.0, 7.0, 9.0, 10.0]
 
-# Output directories
-OUTPUT_BASE = Path("outputs")
-PAPER_DIR = OUTPUT_BASE / "paper_baseline"
-ADAPTIVE_IMAGES_DIR = OUTPUT_BASE / "adaptive_images"
-ADAPTIVE_RANK_DIR = OUTPUT_BASE / "adaptive_rank"
+@dataclass
+class ModeResult:
+    mode: str
+    k_values: np.ndarray
+    chi2_values: np.ndarray
+    rho_max_values: np.ndarray
+    num_images: np.ndarray
+    sigma_min: np.ndarray
+    tau_values: np.ndarray
+    cond_values: np.ndarray
+    numerical_rank: np.ndarray
+    frac_below_5tau: np.ndarray
+    success_mask: np.ndarray
 
-REPORT_PATH = Path("REPORT_RHO_ADAPTIVE.md")
+    @property
+    def success_rate(self) -> float:
+        return float(np.mean(self.success_mask))
+
+    @property
+    def mean_chi2(self) -> float:
+        valid = self.success_mask
+        if np.sum(valid) == 0:
+            return float('inf')
+        return float(np.mean(self.chi2_values[valid]))
 
 
-def run_mode(mode: str, output_dir: Path, k_min: float, k_max: float, num_k: int, n_points: int, extra_args: list[str] = None) -> bool:
-    """Run the pipeline with a specific rho window mode."""
+def run_mode(mode: str, k_min: float, k_max: float, num_k: int, n_points: int,
+             output_dir: Path, chi2_threshold: float = 1.0) -> ModeResult:
     cmd = [
         sys.executable, "main.py",
         "--k-min", str(k_min),
@@ -45,345 +60,192 @@ def run_mode(mode: str, output_dir: Path, k_min: float, k_max: float, num_k: int
         "--n-points", str(n_points),
         "--output-dir", str(output_dir),
         "--rho-window-mode", mode,
-        "--no-plot",
-        "--no-eigenvalues",
-        "--self-check",
     ]
-    if extra_args:
-        cmd.extend(extra_args)
-    
-    LOGGER.info("Running mode=%s: %s", mode, " ".join(cmd))
-    
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
-        if result.returncode != 0:
-            LOGGER.warning("Mode %s returned non-zero exit code %d", mode, result.returncode)
-            LOGGER.warning("stderr: %s", result.stderr[-2000:] if result.stderr else "")
-        return True
-    except subprocess.TimeoutExpired:
-        LOGGER.error("Mode %s timed out after 1 hour", mode)
-        return False
-    except Exception as e:
-        LOGGER.error("Mode %s failed: %s", mode, e)
-        return False
+    # Mode-specific parameters (using actual CLI arg names)
+    if mode == "adaptive_images":
+        cmd.extend(["--adaptive-target-q10-images", "10", "--adaptive-max-drop-fraction", "0.3"])
+    elif mode == "adaptive_rank":
+        cmd.extend(["--adaptive-target-rank-frac", "0.95", "--adaptive-target-nullity", "2"])
+
+    print(f"\n{'='*60}")
+    print(f"Running mode: {mode}")
+    print('='*60)
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"STDERR:\n{result.stderr}")
+        raise RuntimeError(f"Pipeline failed for mode {mode}")
+
+    spectrum_file = output_dir / "spectrum.npz"
+    data = np.load(spectrum_file)
+
+    # NOTE: main.py writes these keys (see spectrum.npz):
+    #   chi2_rank_1, rho_max, images_per_point, sigma_min, tau, condition_number, numerical_rank, frac_below_5tau, ...
+    k_values = data["k_values"]
+    chi2_values = data["chi2_rank_1"]
+    rho_max_values = data.get("rho_max", np.zeros_like(k_values))
+    num_images = data.get("images_per_point", np.zeros_like(k_values))
+    sigma_min = data.get("sigma_min", np.zeros_like(k_values))
+    tau_values = data.get("tau", np.zeros_like(k_values))
+    cond_values = data.get("condition_number", np.zeros_like(k_values))
+    numerical_rank = data.get("numerical_rank", np.zeros_like(k_values))
+    frac_below_5tau = data.get("frac_below_5tau", np.zeros_like(k_values))
+
+    return ModeResult(
+        mode=mode,
+        k_values=k_values,
+        chi2_values=chi2_values,
+        rho_max_values=rho_max_values,
+        num_images=num_images,
+        sigma_min=sigma_min,
+        tau_values=tau_values,
+        cond_values=cond_values,
+        numerical_rank=numerical_rank,
+        frac_below_5tau=frac_below_5tau,
+        success_mask=chi2_values < chi2_threshold,
+    )
 
 
-def load_spectrum(output_dir: Path) -> dict | None:
-    """Load spectrum.npz from an output directory."""
-    spectrum_path = output_dir / "spectrum.npz"
-    if not spectrum_path.exists():
-        LOGGER.warning("No spectrum.npz found in %s", output_dir)
+def band_stats(result: ModeResult, k_lo: float, k_hi: float):
+    mask = (result.k_values >= k_lo) & (result.k_values < k_hi)
+    if k_hi == K_BAND_EDGES[-1]:
+        mask = (result.k_values >= k_lo) & (result.k_values <= k_hi)
+    if np.sum(mask) == 0:
         return None
-    
-    try:
-        data = dict(np.load(spectrum_path, allow_pickle=True))
-        return data
-    except Exception as e:
-        LOGGER.error("Failed to load %s: %s", spectrum_path, e)
-        return None
-
-
-def analyze_results(paper: dict, adaptive_images: dict, adaptive_rank: dict) -> dict:
-    """Analyze and compare results from all three modes."""
-    analysis = {
-        "paper": {},
-        "adaptive_images": {},
-        "adaptive_rank": {},
-        "comparison": {},
+    return {
+        "n": int(np.sum(mask)),
+        "success": float(np.mean(result.success_mask[mask])),
+        "mean_chi2": float(np.mean(result.chi2_values[mask][result.success_mask[mask]])) if np.any(result.success_mask[mask]) else float('inf'),
+        "mean_rho": float(np.mean(result.rho_max_values[mask])),
+        "mean_images": float(np.mean(result.num_images[mask])),
+        "mean_sigma_min": float(np.mean(result.sigma_min[mask])),
+        "mean_tau": float(np.mean(result.tau_values[mask])),
+        "floor_fail": float(np.mean(result.sigma_min[mask] <= result.tau_values[mask])),
     }
-    
-    for name, data in [("paper", paper), ("adaptive_images", adaptive_images), ("adaptive_rank", adaptive_rank)]:
-        if data is None:
-            analysis[name] = {"error": "No data available"}
+
+
+def generate_report(results: dict, args, output_path: Path):
+    lines = ["# Adaptive rho Window Comparison Report", ""]
+    lines.append(f"k in [{args.k_min}, {args.k_max}], N={args.num_k}, base_points={args.n_points}")
+    lines.append("")
+
+    lines.append("## Overall Summary")
+    lines.append("| Mode | Success Rate | Mean chi2 | Floor Fail |")
+    lines.append("|------|-------------|-----------|------------|")
+    for mode_name in ["paper", "adaptive_images", "adaptive_rank"]:
+        if mode_name not in results:
             continue
-        
-        k_values = data.get("k_values", np.array([]))
-        chi2_rank_1 = data.get("chi2_rank_1", np.array([]))
-        kept_points = data.get("kept_points", np.array([]))
-        rho_max = data.get("rho_max", np.array([]))
-        rho_max_original = data.get("rho_max_original", rho_max)
-        adaptive_expansions = data.get("adaptive_expansions", np.zeros_like(k_values, dtype=int))
-        images_per_point = data.get("images_per_point", np.array([]))
-        
-        # Count valid (finite) chi² values
-        valid_chi2_mask = np.isfinite(chi2_rank_1)
-        n_valid = int(np.sum(valid_chi2_mask))
-        n_total = len(k_values)
-        
-        # Count points dropped (kept_points == 0)
-        n_dropped = int(np.sum(kept_points == 0))
-        
-        # Summary statistics
-        analysis[name] = {
-            "n_k_values": n_total,
-            "n_valid_chi2": n_valid,
-            "n_dropped_points": n_dropped,
-            "success_rate": n_valid / n_total if n_total > 0 else 0,
-            "mean_kept_points": float(np.nanmean(kept_points)),
-            "min_kept_points": int(np.nanmin(kept_points)) if len(kept_points) > 0 else 0,
-            "max_rho_expansion": float(np.max(rho_max - rho_max_original)) if len(rho_max) > 0 else 0,
-            "mean_expansions": float(np.mean(adaptive_expansions)),
-            "mean_images_per_point": float(np.nanmean(images_per_point)) if len(images_per_point) > 0 else 0,
-        }
-        
-        if len(k_values) > 0:
-            # Find first k where chi² becomes NaN
-            nan_indices = np.where(~valid_chi2_mask)[0]
-            if len(nan_indices) > 0:
-                first_nan_k = k_values[nan_indices[0]]
-                analysis[name]["first_failure_k"] = float(first_nan_k)
-            else:
-                analysis[name]["first_failure_k"] = None  # No failures
-    
-    # Comparison metrics
-    if paper and adaptive_images:
-        paper_valid = np.sum(np.isfinite(paper.get("chi2_rank_1", [])))
-        adaptive_valid = np.sum(np.isfinite(adaptive_images.get("chi2_rank_1", [])))
-        analysis["comparison"]["images_improvement"] = int(adaptive_valid - paper_valid)
-    
-    if paper and adaptive_rank:
-        paper_valid = np.sum(np.isfinite(paper.get("chi2_rank_1", [])))
-        rank_valid = np.sum(np.isfinite(adaptive_rank.get("chi2_rank_1", [])))
-        analysis["comparison"]["rank_improvement"] = int(rank_valid - paper_valid)
-    
-    return analysis
+        r = results[mode_name]
+        ff = float(np.mean(r.sigma_min <= r.tau_values)) * 100 if np.any(r.tau_values > 0) else 0
+        lines.append(f"| {mode_name} | {r.success_rate*100:.1f}% | {r.mean_chi2:.4f} | {ff:.1f}% |")
+    lines.append("")
 
-
-def generate_report(analysis: dict, k_min: float, k_max: float, num_k: int, n_points: int, paper: dict, adaptive_images: dict, adaptive_rank: dict) -> str:
-    """Generate markdown report."""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    lines = [
-        "# Adaptive Rho Window Comparison Report",
-        "",
-        f"Generated: {timestamp}",
-        "",
-        "## Configuration",
-        "",
-        f"- k range: [{k_min}, {k_max}]",
-        f"- Number of k samples: {num_k}",
-        f"- Base points: {n_points}",
-        "",
-        "## Summary",
-        "",
-        "| Mode | Valid χ² | Success Rate | First Failure k | Mean Kept Points | Mean Images/Point |",
-        "|------|----------|--------------|-----------------|------------------|-------------------|",
-    ]
-    
-    for mode in ["paper", "adaptive_images", "adaptive_rank"]:
-        data = analysis.get(mode, {})
-        if "error" in data:
-            lines.append(f"| {mode} | ERROR | - | - | - | - |")
+    lines.append("## Band Statistics")
+    for mode_name in ["paper", "adaptive_images", "adaptive_rank"]:
+        if mode_name not in results:
             continue
-        
-        valid = data.get("n_valid_chi2", 0)
-        rate = data.get("success_rate", 0) * 100
-        first_fail = data.get("first_failure_k")
-        first_fail_str = f"{first_fail:.2f}" if first_fail is not None else "None"
-        kept = data.get("mean_kept_points", 0)
-        images = data.get("mean_images_per_point", 0)
-        
-        lines.append(f"| {mode} | {valid} | {rate:.1f}% | {first_fail_str} | {kept:.1f} | {images:.1f} |")
-    
-    lines.extend([
-        "",
-        "## Improvement Over Paper Baseline",
-        "",
-    ])
-    
-    comparison = analysis.get("comparison", {})
-    images_imp = comparison.get("images_improvement", "N/A")
-    rank_imp = comparison.get("rank_improvement", "N/A")
-    
-    lines.extend([
-        f"- **adaptive_images mode**: +{images_imp} additional valid k-values",
-        f"- **adaptive_rank mode**: +{rank_imp} additional valid k-values",
-        "",
-    ])
-    
-    # Detailed per-k table (first 20 + last 5)
-    if paper is not None and len(paper.get("k_values", [])) > 0:
-        lines.extend([
-            "## Detailed Results (Sample)",
-            "",
-            "### First 20 k-values",
-            "",
-            "| k | Paper χ² | Images χ² | Rank χ² | Paper rho_max | Images rho_max | Rank rho_max |",
-            "|---|----------|-----------|---------|---------------|----------------|--------------|",
-        ])
-        
-        k_vals = paper.get("k_values", [])
-        for i in range(min(20, len(k_vals))):
-            k = k_vals[i]
-            p_chi2 = paper.get("chi2_rank_1", [np.nan])[i] if paper else np.nan
-            i_chi2 = adaptive_images.get("chi2_rank_1", [np.nan])[i] if adaptive_images and i < len(adaptive_images.get("chi2_rank_1", [])) else np.nan
-            r_chi2 = adaptive_rank.get("chi2_rank_1", [np.nan])[i] if adaptive_rank and i < len(adaptive_rank.get("chi2_rank_1", [])) else np.nan
-            
-            p_rho = paper.get("rho_max", [np.nan])[i] if paper else np.nan
-            i_rho = adaptive_images.get("rho_max", [np.nan])[i] if adaptive_images and i < len(adaptive_images.get("rho_max", [])) else np.nan
-            r_rho = adaptive_rank.get("rho_max", [np.nan])[i] if adaptive_rank and i < len(adaptive_rank.get("rho_max", [])) else np.nan
-            
-            def fmt(v):
-                if np.isnan(v):
-                    return "NaN"
-                elif v < 0.01:
-                    return f"{v:.2e}"
-                else:
-                    return f"{v:.4f}"
-            
-            lines.append(f"| {k:.3f} | {fmt(p_chi2)} | {fmt(i_chi2)} | {fmt(r_chi2)} | {p_rho:.3f} | {i_rho:.3f} | {r_rho:.3f} |")
-        
-        if len(k_vals) > 25:
-            lines.extend([
-                "",
-                "### Last 5 k-values",
-                "",
-                "| k | Paper χ² | Images χ² | Rank χ² | Paper rho_max | Images rho_max | Rank rho_max |",
-                "|---|----------|-----------|---------|---------------|----------------|--------------|",
-            ])
-            
-            for i in range(max(0, len(k_vals) - 5), len(k_vals)):
-                k = k_vals[i]
-                p_chi2 = paper.get("chi2_rank_1", [np.nan])[i] if paper else np.nan
-                i_chi2 = adaptive_images.get("chi2_rank_1", [np.nan])[i] if adaptive_images and i < len(adaptive_images.get("chi2_rank_1", [])) else np.nan
-                r_chi2 = adaptive_rank.get("chi2_rank_1", [np.nan])[i] if adaptive_rank and i < len(adaptive_rank.get("chi2_rank_1", [])) else np.nan
-                
-                p_rho = paper.get("rho_max", [np.nan])[i] if paper else np.nan
-                i_rho = adaptive_images.get("rho_max", [np.nan])[i] if adaptive_images and i < len(adaptive_images.get("rho_max", [])) else np.nan
-                r_rho = adaptive_rank.get("rho_max", [np.nan])[i] if adaptive_rank and i < len(adaptive_rank.get("rho_max", [])) else np.nan
-                
-                def fmt(v):
-                    if np.isnan(v):
-                        return "NaN"
-                    elif v < 0.01:
-                        return f"{v:.2e}"
-                    else:
-                        return f"{v:.4f}"
-                
-                lines.append(f"| {k:.3f} | {fmt(p_chi2)} | {fmt(i_chi2)} | {fmt(r_chi2)} | {p_rho:.3f} | {i_rho:.3f} | {r_rho:.3f} |")
-    
-    lines.extend([
-        "",
-        "## Adaptive Mode Statistics",
-        "",
-    ])
-    
-    for mode in ["adaptive_images", "adaptive_rank"]:
-        data = analysis.get(mode, {})
-        if "error" not in data:
-            lines.extend([
-                f"### {mode}",
-                "",
-                f"- Max rho expansion: {data.get('max_rho_expansion', 0):.3f}",
-                f"- Mean expansion steps: {data.get('mean_expansions', 0):.2f}",
-                "",
-            ])
-    
-    lines.extend([
-        "## Conclusions",
-        "",
-        "1. **Paper mode failure pattern**: The paper-faithful cutoffs lead to insufficient ghost images at high k, causing point dropout and NaN chi² values.",
-        "",
-        "2. **Adaptive strategies effectiveness**: Compare success rates to determine if adaptive window expansion recovers valid eigenvalue estimates.",
-        "",
-        "3. **Trade-offs**: Expanding rho_max increases images but may include contributions from beyond the intended radial cutoff. Investigate if chi² values remain physically meaningful.",
-        "",
-    ])
-    
-    return "\n".join(lines)
+        r = results[mode_name]
+        lines.append(f"### {mode_name}")
+        lines.append("| Band | N | Success | Mean chi2 | Mean rho | Images | sigma_min | tau | Floor Fail |")
+        lines.append("|------|---|---------|-----------|----------|--------|-----------|-----|------------|")
+        for i in range(len(K_BAND_EDGES) - 1):
+            k_lo, k_hi = K_BAND_EDGES[i], K_BAND_EDGES[i+1]
+            bs = band_stats(r, k_lo, k_hi)
+            if bs:
+                chi2_str = f"{bs['mean_chi2']:.4f}" if bs['mean_chi2'] < 100 else "inf"
+                lines.append(f"| [{k_lo:.0f},{k_hi:.0f}) | {bs['n']} | {bs['success']*100:.0f}% | {chi2_str} | {bs['mean_rho']:.2f} | {bs['mean_images']:.1f} | {bs['mean_sigma_min']:.2e} | {bs['mean_tau']:.2e} | {bs['floor_fail']*100:.0f}% |")
+        lines.append("")
 
-
-def print_pasteable_summary(analysis: dict):
-    """Print a copy-pasteable summary for chat/PR."""
-    print("\n" + "="*60)
-    print("PASTEABLE SUMMARY")
-    print("="*60)
-    
-    lines = [
-        "## Rho Adaptive Window Experiment Results",
-        "",
-    ]
-    
-    for mode in ["paper", "adaptive_images", "adaptive_rank"]:
-        data = analysis.get(mode, {})
-        if "error" in data:
-            lines.append(f"- **{mode}**: ERROR - {data['error']}")
-        else:
-            valid = data.get("n_valid_chi2", 0)
-            total = data.get("n_k_values", 0)
-            rate = data.get("success_rate", 0) * 100
-            first_fail = data.get("first_failure_k")
-            fail_str = f"k={first_fail:.2f}" if first_fail else "none"
-            lines.append(f"- **{mode}**: {valid}/{total} valid ({rate:.1f}%), first failure: {fail_str}")
-    
-    comparison = analysis.get("comparison", {})
-    if comparison:
-        lines.extend([
-            "",
-            "**Improvements over paper baseline:**",
-            f"- adaptive_images: +{comparison.get('images_improvement', '?')} k-values",
-            f"- adaptive_rank: +{comparison.get('rank_improvement', '?')} k-values",
-        ])
-    
-    print("\n".join(lines))
-    print("\n" + "="*60 + "\n")
+    report_text = "\n".join(lines)
+    output_path.write_text(report_text)
+    return report_text
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run adaptive rho window comparison")
+    parser = argparse.ArgumentParser()
     parser.add_argument("--k-min", type=float, default=1.0)
     parser.add_argument("--k-max", type=float, default=10.0)
     parser.add_argument("--num-k", type=int, default=400)
-    parser.add_argument("--n-points", type=int, default=40)
-    parser.add_argument("--skip-paper", action="store_true", help="Skip paper mode (reuse existing)")
-    parser.add_argument("--skip-images", action="store_true", help="Skip adaptive_images mode")
-    parser.add_argument("--skip-rank", action="store_true", help="Skip adaptive_rank mode")
+    parser.add_argument("--n-points", type=int, default=60)
+    parser.add_argument("--chi2-threshold", type=float, default=1.0)
+    parser.add_argument("--output-dir", type=str, default=None)
+    parser.add_argument(
+        "--hpc-num-chunks",
+        type=int,
+        default=None,
+        help="If set, print suggested per-chunk commands instead of running locally.",
+    )
     args = parser.parse_args()
-    
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    
-    OUTPUT_BASE.mkdir(parents=True, exist_ok=True)
-    
-    # Run each mode
-    if not args.skip_paper:
-        run_mode("paper", PAPER_DIR, args.k_min, args.k_max, args.num_k, args.n_points)
-    
-    if not args.skip_images:
-        run_mode("adaptive_images", ADAPTIVE_IMAGES_DIR, args.k_min, args.k_max, args.num_k, args.n_points)
-    
-    if not args.skip_rank:
-        run_mode("adaptive_rank", ADAPTIVE_RANK_DIR, args.k_min, args.k_max, args.num_k, args.n_points)
-    
-    # Load results
-    paper = load_spectrum(PAPER_DIR)
-    adaptive_images = load_spectrum(ADAPTIVE_IMAGES_DIR)
-    adaptive_rank = load_spectrum(ADAPTIVE_RANK_DIR)
-    
-    # Analyze
-    analysis = analyze_results(paper, adaptive_images, adaptive_rank)
-    
-    # Generate report
-    report = generate_report(analysis, args.k_min, args.k_max, args.num_k, args.n_points, paper, adaptive_images, adaptive_rank)
-    
-    REPORT_PATH.write_text(report)
-    LOGGER.info("Wrote report to %s", REPORT_PATH)
-    
-    # Save analysis as JSON
-    analysis_path = OUTPUT_BASE / "analysis.json"
-    # Convert numpy types for JSON serialization
-    def convert(obj):
-        if isinstance(obj, (np.integer, np.floating)):
-            return float(obj) if isinstance(obj, np.floating) else int(obj)
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        return obj
-    
-    with open(analysis_path, "w") as f:
-        json.dump(analysis, f, indent=2, default=convert)
-    LOGGER.info("Wrote analysis to %s", analysis_path)
-    
-    # Print pasteable summary
-    print_pasteable_summary(analysis)
+
+    base_dir = Path(args.output_dir) if args.output_dir else Path(tempfile.mkdtemp(prefix="rho_adaptive_"))
+    base_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Output: {base_dir}")
+
+    modes = ["paper", "adaptive_images", "adaptive_rank"]
+
+    if args.hpc_num_chunks is not None:
+        n = int(args.hpc_num_chunks)
+        print("\nHPC chunked run commands (one mode x one chunk per job):\n")
+        for mode in modes:
+            for i in range(n):
+                # Use the correct main.py flag: --rho-window-mode
+                parts = [
+                    sys.executable,
+                    "main.py",
+                    "--k-min",
+                    str(args.k_min),
+                    "--k-max",
+                    str(args.k_max),
+                    "--num-k",
+                    str(args.num_k),
+                    "--n-points",
+                    str(args.n_points),
+                    "--no-plot",
+                    "--no-eigenvalues",
+                    "--rho-window-mode",
+                    mode,
+                    "--k-num-chunks",
+                    str(n),
+                    "--k-chunk-index",
+                    str(i),
+                    "--output-dir",
+                    str(base_dir / mode),
+                ]
+                if mode == "adaptive_images":
+                    parts += ["--adaptive-target-q10-images", "10", "--adaptive-max-drop-fraction", "0.3"]
+                elif mode == "adaptive_rank":
+                    parts += ["--adaptive-target-rank-frac", "0.95", "--adaptive-target-nullity", "2"]
+                print(" ".join(parts))
+
+        print("\nAfter all chunks finish:")
+        print(
+            f"{sys.executable} scripts/combine_rho_adaptive_chunks.py --base-dir {base_dir} "
+            f"--k-min {args.k_min} --k-max {args.k_max} --num-k {args.num_k} --n-points {args.n_points}"
+        )
+        return
+    results = {}
+
+    for mode in modes:
+        mode_dir = base_dir / f"output_{mode}"
+        mode_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            r = run_mode(mode, args.k_min, args.k_max, args.num_k, args.n_points, mode_dir, args.chi2_threshold)
+            results[mode] = r
+            print(f"{mode}: {r.success_rate*100:.1f}% success")
+        except Exception as e:
+            print(f"ERROR {mode}: {e}")
+
+    report_path = Path("REPORT_RHO_ADAPTIVE.md")
+    generate_report(results, args, report_path)
+    print(f"\nReport: {report_path}")
+
+    print("\n## SUMMARY ##")
+    print(f"k in [{args.k_min}, {args.k_max}], N={args.num_k}, pts={args.n_points}")
+    print("| Mode | Success | Mean chi2 |")
+    print("|------|---------|-----------|")
+    for m in modes:
+        if m in results:
+            print(f"| {m} | {results[m].success_rate*100:.0f}% | {results[m].mean_chi2:.4f} |")
 
 
 if __name__ == "__main__":
